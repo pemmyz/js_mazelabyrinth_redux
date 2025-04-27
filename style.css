@@ -1,0 +1,25 @@
+body {
+  margin: 0;
+  overflow: hidden; /* Prevent scrollbars */
+}
+
+/* WebGL canvas fills the viewport */
+#glCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0; /* Behind the overlay */
+}
+
+/* Overlay canvas for 2D map and help text */
+#mazeCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1; /* On top of the WebGL canvas */
+  pointer-events: auto; /* Keep pointer events for map drag and potentially UI elements */
+}
