@@ -1,5 +1,10 @@
 # js_mazelabyrinth_redux
 
+
+### Play it now: https://pemmyz.github.io/js_mazelabyrinth_redux/
+
+
+---
 ---
 ## Screenshots
 
