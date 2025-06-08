@@ -473,6 +473,13 @@ let lastManualInputTime = 0;
 const countdownDuration = 7000; // milliseconds (7 seconds)
 let autoStarted = false;
 
+// ----------- Auto Map Toggling for Bot Mode -----------
+let autoMapState = 'IDLE'; // 'IDLE', 'INITIAL_WAIT', 'MAP_OPEN', 'MAP_CLOSED_WAIT'
+let autoMapTimer = 0;
+const autoMapInitialWait = 3000; // 3 seconds before first open
+const autoMapOpenDuration = 5000;  // 5 seconds map is visible
+const autoMapClosedWaitDuration = 6000; // 6 seconds map is hidden
+
 // ----------- Continuous Movement State (NEW) -----------
 const keysDown = {};
 window.addEventListener("keydown", e => { keysDown[e.key.toLowerCase()] = true; onKeyDown(e); }); // Trigger original onKeyDown too
@@ -838,6 +845,11 @@ function restartGame() {
   autoStarted = false; // Reset auto-start flag
   lastManualInputTime = performance.now(); // Reset auto-start timer
 
+  // NEW: Reset the auto-map state
+  autoMapState = 'IDLE';
+  autoMapTimer = 0;
+  fullMapVisible = false; // Ensure map is closed on restart
+
   // Discover the starting cell
    updateDiscovered();
 }
@@ -941,6 +953,13 @@ function onKeyDown(e) {
           console.log("Bot mode " + (botMode ? "enabled" : "disabled"));
           if (botMode) {
               computeBotPath(); // Compute path if enabling
+              // NEW: Start the auto-map cycle
+              autoMapState = 'INITIAL_WAIT';
+              autoMapTimer = performance.now();
+          } else {
+              // NEW: Stop the auto-map cycle and close the map
+              autoMapState = 'IDLE';
+              fullMapVisible = false;
           }
           // Toggling bot mode IS a manual action
           isManualAction = true;
@@ -959,6 +978,13 @@ function onKeyDown(e) {
           break;
       case "m":
           fullMapVisible = !fullMapVisible;
+
+          // NEW: If user manually toggles map, disable the auto-toggling feature for this session
+          if (botMode) {
+              console.log("Manual map override: Disabling auto-map.");
+              autoMapState = 'IDLE';
+          }
+
           // Reset drag offset when toggling map, keep center focused on player
           if (fullMapVisible) {
               dragOffsetX = 0;
@@ -1647,6 +1673,42 @@ function updateOverlay() {
 
   ctx.clearRect(0, 0, overlay.width, overlay.height); // Clear previous frame
 
+  // ================== NEW: AUTO-MAP STATE MACHINE ==================
+  if (botMode && autoMapState !== 'IDLE') {
+      const now = performance.now();
+      const elapsed = now - autoMapTimer;
+
+      switch (autoMapState) {
+          case 'INITIAL_WAIT':
+              if (elapsed >= autoMapInitialWait) {
+                  console.log("Auto-map: Opening map.");
+                  fullMapVisible = true;
+                  autoMapState = 'MAP_OPEN';
+                  autoMapTimer = now; // Reset timer for the next state
+              }
+              break;
+
+          case 'MAP_OPEN':
+              if (elapsed >= autoMapOpenDuration) {
+                  console.log("Auto-map: Closing map.");
+                  fullMapVisible = false;
+                  autoMapState = 'MAP_CLOSED_WAIT';
+                  autoMapTimer = now; // Reset timer
+              }
+              break;
+
+          case 'MAP_CLOSED_WAIT':
+              if (elapsed >= autoMapClosedWaitDuration) {
+                  console.log("Auto-map: Re-opening map.");
+                  fullMapVisible = true;
+                  autoMapState = 'MAP_OPEN'; // Go back to the open state to loop
+                  autoMapTimer = now; // Reset timer
+              }
+              break;
+      }
+  }
+  // =================================================================
+
   // Check if maze data is loaded before drawing maps
   if (!mazeData || !mazeData.maze || !discovered) {
       console.warn("Overlay update skipped: Maze data not ready.");
@@ -1747,8 +1809,10 @@ function updateOverlay() {
           botMode = true; // Enable bot mode
           selectedAlgorithm = "explore"; // Force explore mode on auto-start
           computeBotPath(); // Calculate the path
-          // Display message *after* auto-starting
-          // ctx.fillText("Bot auto-started! Press B to toggle.", centerX, centerY); // Message shown in the next block now
+
+          // NEW: Start the auto-map cycle when the bot auto-starts
+          autoMapState = 'INITIAL_WAIT';
+          autoMapTimer = performance.now();
       }
   }
 
