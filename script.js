@@ -441,11 +441,12 @@ let playerAngle = 0; // Facing positive Z
 const mazeWidth = 100, mazeHeight = 100, maxRooms = 40, roomMinSize = 5, roomMaxSize = 9; // Adjusted maze params
 let fullMapVisible = false;
 let helpVisible = false; // Start with help hidden
+let lastFrameTime = 0; // For delta time calculation
 
-// Animation variables for smooth movement.
+// Animation variables for smooth movement (used by bot and player turning).
 let animatingTranslation = false;
 let translationStart = 0;
-const translationDuration = 50; // milliseconds for movement step
+const translationDuration = 50; // milliseconds for bot movement step
 let startPos = [0, 0, 0];
 let targetPos = [0, 0, 0];
 
@@ -480,7 +481,7 @@ const autoMapInitialWait = 3000; // 3 seconds before first open
 const autoMapOpenDuration = 5000;  // 5 seconds map is visible
 const autoMapClosedWaitDuration = 6000; // 6 seconds map is hidden
 
-// ----------- Continuous Movement State (NEW) -----------
+// ----------- Continuous Movement State -----------
 const keysDown = {};
 window.addEventListener("keydown", e => { keysDown[e.key.toLowerCase()] = true; onKeyDown(e); }); // Trigger original onKeyDown too
 window.addEventListener("keyup",   e => { keysDown[e.key.toLowerCase()] = false; });
@@ -882,43 +883,15 @@ function onMouseUp(e) {
   }
 }
 
-// ============================ Movement Helper Functions (NEW) ============================
-const moveSpeed = 0.15; // Adjust step distance if needed
+// ============================ Movement Helper Functions (MODIFIED) ============================
 const turnSpeed = 90;   // Degrees per turn key press
 
-function handleMoveForward() {
-    let rad = toRadian(playerAngle);
-    let forward = [Math.sin(rad) * moveSpeed, 0, Math.cos(rad) * moveSpeed];
-    let currentX = playerPos[0];
-    let currentZ = playerPos[2];
-    let targetX = currentX + forward[0];
-    let targetZ = currentZ + forward[2];
-    if (canMove(targetX, targetZ)) {
-        animatingTranslation=true;
-        translationStart=performance.now();
-        startPos=[...playerPos];
-        targetPos=[targetX, playerPos[1], targetZ];
-        // Timer reset is handled in onKeyDown
-    }
-}
-
-function handleMoveBackward() {
-    let rad = toRadian(playerAngle);
-    let forward = [Math.sin(rad) * moveSpeed, 0, Math.cos(rad) * moveSpeed];
-    let currentX = playerPos[0];
-    let currentZ = playerPos[2];
-    let targetX = currentX - forward[0];
-    let targetZ = currentZ - forward[2];
-    if (canMove(targetX, targetZ)) {
-        animatingTranslation=true;
-        translationStart=performance.now();
-        startPos=[...playerPos];
-        targetPos=[targetX, playerPos[1], targetZ];
-        // Timer reset is handled in onKeyDown
-    }
-}
+// handleMoveForward and handleMoveBackward are no longer used for manual movement.
+// They are replaced by a continuous movement model in the render loop.
+// The bot sets its animation properties directly.
 
 function handleTurnLeft() {
+    if (animatingRotation) return; // Prevent re-triggering while an animation is in progress
     animatingRotation=true;
     rotationStart=performance.now();
     startAngle=playerAngle;
@@ -928,6 +901,7 @@ function handleTurnLeft() {
 }
 
 function handleTurnRight() {
+    if (animatingRotation) return; // Prevent re-triggering while an animation is in progress
     animatingRotation=true;
     rotationStart=performance.now();
     startAngle=playerAngle;
@@ -937,11 +911,11 @@ function handleTurnRight() {
 }
 
 
-// ============================ Keyboard Controls (MODIFIED) ============================
+// ============================ Keyboard Controls ============================
 function onKeyDown(e) {
   // This function now primarily handles toggles, algorithm selection,
   // and resetting the auto-start timer on *any* relevant key press.
-  // Movement initiation is moved to the render loop based on keysDown state.
+  // Continuous movement is handled in the render loop based on keysDown state.
 
   let isManualAction = false; // Flag to check if countdown should reset
   let key = e.key.toLowerCase();
@@ -1009,14 +983,7 @@ function onKeyDown(e) {
        lastManualInputTime = performance.now();
        autoStarted = false; // Reset auto-start state
   }
-
-  // Prevent default browser behavior for arrow keys, etc. if needed
-  // if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
-  //    e.preventDefault();
-  // }
 }
-// Add event listeners for keydown/keyup inside the script
-// (These were defined globally earlier near keysDown definition)
 
 
 // ============================ Update Discovered Cells ============================
@@ -1121,15 +1088,13 @@ function init() {
 
 
   // Load textures (provide placeholder paths or actual image URLs)
-  // ** IMPORTANT: Make sure these image files exist in the same directory **
-  textures.ground = loadTexture(gl, "ground.jpg"); // Replace/provide this texture
-  textures.roof   = loadTexture(gl, "roof.jpg");   // Replace/provide this texture
-  textures.brick  = loadTexture(gl, "brick.jpg");  // Replace/provide this texture
-  textures.exit   = loadTexture(gl, "exit.png");   // Replace/provide this texture
+  textures.ground = loadTexture(gl, "ground.jpg");
+  textures.roof   = loadTexture(gl, "roof.jpg");
+  textures.brick  = loadTexture(gl, "brick.jpg");
+  textures.exit   = loadTexture(gl, "exit.png");
 
   // Initial maze generation
-  mazeData = createMap(mazeWidth, mazeHeight, maxRooms, roomMinSize, roomMaxSize, Date.now()); // Use current time as seed
-  //mazeData.maze.forEach(row => console.log(row)); // Log initial maze
+  mazeData = createMap(mazeWidth, mazeHeight, maxRooms, roomMinSize, roomMaxSize, Date.now());
 
   // Place player in the first room
   if (mazeData.rooms && mazeData.rooms.length > 0) {
@@ -1170,13 +1135,10 @@ function init() {
 
   gl.clearColor(0.2, 0.2, 0.3, 1.0); // Dark blue-grey background
   gl.enable(gl.DEPTH_TEST);
-  gl.depthFunc(gl.LEQUAL); // Standard depth testing
-  //gl.enable(gl.CULL_FACE); // Cull back faces for potential performance gain
-  //gl.cullFace(gl.BACK);
+  gl.depthFunc(gl.LEQUAL);
 
 
   const overlay = document.getElementById("mazeCanvas");
-  // Check if overlay canvas exists before adding listeners
   if (!overlay) {
       alert("Error: Could not find mazeCanvas element!");
       return;
@@ -1184,11 +1146,12 @@ function init() {
   overlay.addEventListener("mousedown", onMouseDown, false);
   overlay.addEventListener("mousemove", onMouseMove, false);
   overlay.addEventListener("mouseup", onMouseUp, false);
-  overlay.addEventListener("mouseleave", onMouseUp, false); // Stop dragging if mouse leaves canvas
+  overlay.addEventListener("mouseleave", onMouseUp, false);
 
-  // === Auto-Start Initialization ===
-  lastManualInputTime = performance.now(); // Initialize countdown timer start
-  autoStarted = false;                   // Bot hasn't auto-started yet
+  // === Auto-Start & Frame Time Initialization ===
+  lastManualInputTime = performance.now();
+  lastFrameTime = performance.now(); // Initialize frame timer
+  autoStarted = false;
 
   requestAnimationFrame(render); // Start the main loop
 }
@@ -1208,7 +1171,6 @@ function initBuffers() {
 
 function initBuffer(dataArray) {
   if (!dataArray || dataArray.length === 0) {
-       // Return a dummy object if there's no data (e.g., no exit walls)
        return { buffer: null, vertexCount: 0 };
   }
   const buffer = gl.createBuffer();
@@ -1225,72 +1187,88 @@ function initBuffer(dataArray) {
 }
 
 // ============================ Render Loop (MODIFIED) ============================
-function render(now) { // 'now' is provided by requestAnimationFrame
-  let currentTime = performance.now(); // Use performance.now() for interval calculations
+function render(now) {
+  const deltaTime = (now - lastFrameTime) / 1000.0; // Time since last frame in seconds
+  lastFrameTime = now;
 
-  // --- Update Player Position/Angle based on Animation ---
-  if (animatingTranslation) {
-    let t = (currentTime - translationStart) / translationDuration;
-    t = Math.min(t, 1.0); // Clamp t to 1
-    // Use smoother easing function (e.g., ease-out cubic)
+  // --- Update Animation States (Bot Movement and Player Turning) ---
+  if (animatingTranslation) { // This is now ONLY used by the bot
+    let t = (performance.now() - translationStart) / translationDuration;
+    t = Math.min(t, 1.0);
     let easedT = 1 - Math.pow(1 - t, 3);
     playerPos[0] = lerp(startPos[0], targetPos[0], easedT);
-    // playerPos[1] = lerp(startPos[1], targetPos[1], easedT); // Y position doesn't change
     playerPos[2] = lerp(startPos[2], targetPos[2], easedT);
     if (t >= 1.0) {
        animatingTranslation = false;
-       playerPos = [...targetPos]; // Ensure exact final position
-       updateDiscovered(); // Update visibility after movement stops
+       playerPos = [...targetPos];
+       updateDiscovered();
     }
   }
-  if (animatingRotation) {
-    let t = (currentTime - rotationStart) / rotationDuration;
+  if (animatingRotation) { // Used by bot and player
+    let t = (performance.now() - rotationStart) / rotationDuration;
     t = Math.min(t, 1.0);
     let easedT = 1 - Math.pow(1 - t, 3);
     playerAngle = lerpAngle(startAngle, targetAngle, easedT);
-    playerAngle = (playerAngle + 360) % 360; // Keep angle in [0, 360)
+    playerAngle = (playerAngle + 360) % 360;
     if (t >= 1.0) {
        animatingRotation = false;
-       playerAngle = targetAngle; // Ensure exact final angle
-       updateDiscovered(); // Update visibility after turning stops
+       playerAngle = targetAngle;
+       updateDiscovered();
     }
   }
 
-  // -------- Handle Continuous Manual Movement (NEW) -----------
-  if (!botMode && !animatingTranslation && !animatingRotation) {
-      // Check keysDown state *every frame* to initiate movement if needed
-      if (keysDown["w"] || keysDown["arrowup"])    handleMoveForward();
-      else if (keysDown["s"] || keysDown["arrowdown"])  handleMoveBackward(); // Use else if to prevent moving fwd/back simultaneously
+  // -------- Handle Continuous Manual Movement (REVISED) -----------
+  if (!botMode) {
+      const manualMoveSpeed = 4.5; // Units per second. Increased for faster movement.
+      let moveX = 0;
+      let moveZ = 0;
 
-      // Turning can happen independently of forward/back movement (or simultaneously if desired)
-      if (keysDown["a"] || keysDown["arrowleft"])  handleTurnLeft();
-      else if (keysDown["d"] || keysDown["arrowright"]) handleTurnRight(); // Use else if to prevent spinning wildly
+      const rad = toRadian(playerAngle);
+      if (keysDown["w"] || keysDown["arrowup"]) {
+          moveX += Math.sin(rad) * manualMoveSpeed * deltaTime;
+          moveZ += Math.cos(rad) * manualMoveSpeed * deltaTime;
+      }
+      if (keysDown["s"] || keysDown["arrowdown"]) {
+          moveX -= Math.sin(rad) * manualMoveSpeed * deltaTime;
+          moveZ -= Math.cos(rad) * manualMoveSpeed * deltaTime;
+      }
+
+      if (moveX !== 0 || moveZ !== 0) {
+          const targetX = playerPos[0] + moveX;
+          const targetZ = playerPos[2] + moveZ;
+          if (canMove(targetX, targetZ)) {
+              playerPos[0] = targetX;
+              playerPos[2] = targetZ;
+              updateDiscovered(); // Update visibility while moving
+          }
+      }
+
+      // Handle turning initiation (uses the animation system for smoothness)
+      if (!animatingRotation) {
+          if (keysDown["a"] || keysDown["arrowleft"]) {
+              handleTurnLeft();
+          } else if (keysDown["d"] || keysDown["arrowright"]) {
+              handleTurnRight();
+          }
+      }
   }
 
 
   // -------- Bot mode automatic movement logic -----------
   if (botMode && !animatingTranslation && !animatingRotation) {
-      // --- Bot logic remains the same ---
       if (botPath && botPath.length > 0 && botPathIndex < botPath.length) {
-        let currentCell = { x: Math.floor(playerPos[0]), y: Math.floor(playerPos[2]) };
         let nextCell = botPath[botPathIndex];
-
-        // Target the center of the next cell
         let targetX = nextCell.x + 0.5;
         let targetZ = nextCell.y + 0.5;
-
         let dx = targetX - playerPos[0];
         let dz = targetZ - playerPos[2];
         let distSq = dx*dx + dz*dz;
 
-         // If very close to the target cell center, advance to the next path node
-         if (distSq < 0.01) { // Threshold for reaching the cell center
+         if (distSq < 0.01) {
              botPathIndex++;
              if (botPathIndex >= botPath.length) {
                  console.log("Bot reached end of path.");
-                 // Reached end, path logic handled below (checking exit)
              } else {
-                // Continue to the next cell in the path
                 nextCell = botPath[botPathIndex];
                 targetX = nextCell.x + 0.5;
                 targetZ = nextCell.y + 0.5;
@@ -1299,74 +1277,35 @@ function render(now) { // 'now' is provided by requestAnimationFrame
              }
          }
 
-
-        // Only proceed if there's a valid next cell
         if (botPathIndex < botPath.length) {
-            // --- Bot Rotation ---
-            let desiredAngle = Math.atan2(dx, dz) * (180 / Math.PI); // Angle towards target
-            desiredAngle = (desiredAngle + 360) % 360;
-
-            // Calculate the difference, handling wrap-around
+            let desiredAngle = (Math.atan2(dx, dz) * (180 / Math.PI) + 360) % 360;
             let angleDiff = desiredAngle - playerAngle;
             if (angleDiff > 180) angleDiff -= 360;
             if (angleDiff <= -180) angleDiff += 360;
 
-            // If significant rotation is needed, rotate first
-            if (Math.abs(angleDiff) > 1) { // Tolerance for angle alignment
+            if (Math.abs(angleDiff) > 1) {
                 animatingRotation = true;
                 rotationStart = performance.now();
                 startAngle = playerAngle;
-                // Snap to the closest cardinal direction if desired, or use exact angle
-                // Snapping:
-                // targetAngle = Math.round(desiredAngle / 90) * 90 % 360;
-                // Exact:
                 targetAngle = desiredAngle;
-            }
-            // --- Bot Translation ---
-            else { // If facing roughly the right way, move forward
-                // Calculate intended next position based on target cell center
-                // We want to move directly towards the target cell center now
-                let moveRad = toRadian(desiredAngle); // Angle towards target
-                let botMoveSpeed = 0.1; // Can adjust bot speed
-                let moveStepX = Math.sin(moveRad) * botMoveSpeed;
-                let moveStepZ = Math.cos(moveRad) * botMoveSpeed;
-                let nextPosX = playerPos[0] + moveStepX;
-                let nextPosZ = playerPos[2] + moveStepZ;
-
-                // Check if the *intended* next grid cell is walkable before starting animation
-                let checkX = Math.floor(targetX);
-                let checkZ = Math.floor(targetZ);
-                if (checkZ >= 0 && checkZ < mazeHeight && checkX >= 0 && checkX < mazeWidth &&
-                   (mazeData.maze[checkZ][checkX] === ' ' || mazeData.maze[checkZ][checkX] === 'E'))
-                {
-                     // Use the calculated target cell center, not just one step
-                     // Final collision check with buffer using target cell center
-                     if (canMove(targetX, targetZ)) {
-                        animatingTranslation = true;
-                        translationStart = performance.now();
-                        startPos = [...playerPos];
-                        // Animate towards the center of the target cell
-                        targetPos = [targetX, playerPos[1], targetZ];
-                     } else {
-                          console.warn("Bot collision detected despite path (target center). Recomputing.");
-                          computeBotPath(); // Path is likely blocked, recompute
-                     }
+            } else {
+                if (canMove(targetX, targetZ)) {
+                    animatingTranslation = true;
+                    translationStart = performance.now();
+                    startPos = [...playerPos];
+                    targetPos = [targetX, playerPos[1], targetZ];
                 } else {
-                    console.warn("Bot target cell is invalid. Recomputing path.");
-                    computeBotPath(); // Target cell is bad, recompute
+                    console.warn("Bot collision detected. Recomputing.");
+                    computeBotPath();
                 }
             }
         }
-      } else if (botMode) { // Bot is on, but path is empty or finished
-        // Check if we are on the exit cell first
+      } else if (botMode) {
         let playerCellX = Math.floor(playerPos[0]);
         let playerCellZ = Math.floor(playerPos[2]);
-         if (playerCellZ >= 0 && playerCellZ < mazeHeight && playerCellX >= 0 && playerCellX < mazeWidth &&
-             mazeData.maze[playerCellZ].charAt(playerCellX) === 'E') {
-             // Bot has reached the exit, let the exit logic handle restart
-         } else {
-             // If bot is on but has no path (e.g., failed computation), try recomputing
-             console.log("Bot has no path or finished prematurely. Recomputing...");
+         if (playerCellZ < 0 || playerCellZ >= mazeHeight || playerCellX < 0 || playerCellX >= mazeWidth ||
+             mazeData.maze[playerCellZ].charAt(playerCellX) !== 'E') {
+             console.log("Bot has no path. Recomputing...");
              computeBotPath();
          }
       }
@@ -1374,7 +1313,6 @@ function render(now) { // 'now' is provided by requestAnimationFrame
 
 
   // --- WebGL Drawing ---
-  // Ensure gl context is available before proceeding
   if (!gl) {
       console.error("Render loop: WebGL context lost or not initialized.");
       return;
@@ -1382,195 +1320,135 @@ function render(now) { // 'now' is provided by requestAnimationFrame
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-  // Check if shader program is valid before using
   if (!shaderProgram) {
       console.error("Render loop: Shader program not available.");
-      return; // Skip rendering if shaders failed
+      return;
   }
   gl.useProgram(shaderProgram);
 
-  // Projection Matrix (FOV, Aspect Ratio, Near/Far Clipping)
-  const fieldOfView = toRadian(75); // Adjusted FOV
+  const fieldOfView = toRadian(75);
   const aspect = gl.canvas.width / gl.canvas.height;
-  const zNear = 0.01; // Closer near plane
-  const zFar = 200.0; // Further far plane
+  const zNear = 0.01;
+  const zFar = 200.0;
   const projectionMatrix = glMatrix.mat4.create();
   glMatrix.mat4.perspective(projectionMatrix, fieldOfView, aspect, zNear, zFar);
   gl.uniformMatrix4fv(uniformLocations.uProjection, false, projectionMatrix);
 
-  // View Matrix (Camera Position and Orientation)
   const viewMatrix = glMatrix.mat4.create();
-  const eye = [playerPos[0], playerPos[1] + 0.5, playerPos[2]]; // Camera height at 0.5 units
-  const direction = [
-    Math.sin(toRadian(playerAngle)),
-    0, // Look straight ahead horizontally
-    Math.cos(toRadian(playerAngle))
-  ];
+  const eye = [playerPos[0], playerPos[1] + 0.5, playerPos[2]];
+  const direction = [Math.sin(toRadian(playerAngle)), 0, Math.cos(toRadian(playerAngle))];
   const center = [eye[0] + direction[0], eye[1] + direction[1], eye[2] + direction[2]];
-  const up = [0, 1, 0]; // Y is up
+  const up = [0, 1, 0];
   glMatrix.mat4.lookAt(viewMatrix, eye, center, up);
   gl.uniformMatrix4fv(uniformLocations.uView, false, viewMatrix);
 
-  // Draw Maze Components (Model Matrix is identity for static world geometry)
-  const modelMatrix = glMatrix.mat4.create(); // Identity matrix
+  const modelMatrix = glMatrix.mat4.create();
   drawObject(buffers.floor, textures.ground, modelMatrix);
   drawObject(buffers.ceiling, textures.roof, modelMatrix);
   drawObject(buffers.wallBrick, textures.brick, modelMatrix);
   drawObject(buffers.wallExit, textures.exit, modelMatrix);
 
   // --- Update 2D Overlay ---
-  updateOverlay(); // Includes map, help, and auto-start messages
+  updateOverlay();
 
   // --- Check for Game Win Condition ---
-  // If player is physically on an exit cell and not currently moving/turning
   if (!animatingTranslation && !animatingRotation) {
     let currentCellX = Math.floor(playerPos[0]);
     let currentCellZ = Math.floor(playerPos[2]);
-     // Check bounds before accessing maze array
      if (currentCellZ >= 0 && currentCellZ < mazeHeight && currentCellX >= 0 && currentCellX < mazeWidth) {
          if (mazeData.maze[currentCellZ].charAt(currentCellX) === 'E') {
-             restartGame(); // Found the exit!
+             restartGame();
          }
      }
   }
 
-  // Request next frame
   requestAnimationFrame(render);
 }
 
  function drawObject(bufferObj, texture, modelMatrix) {
-  // Check if buffer and texture are valid before attempting to draw
   if (!gl || !bufferObj || !bufferObj.buffer || bufferObj.vertexCount === 0 || !texture) {
-    //console.warn("Skipping drawObject: Invalid buffer or texture or GL context.");
     return;
   }
-  // Check if shader locations are valid
   if (attribLocations.aPosition < 0 || attribLocations.aTexCoord < 0 || !uniformLocations.uModel || !uniformLocations.uTexture) {
       console.error("Skipping drawObject: Invalid shader locations.");
       return;
   }
 
   gl.bindBuffer(gl.ARRAY_BUFFER, bufferObj.buffer);
-
-  // Set up vertex attributes (Position and Texture Coordinates)
-  // Stride: 5 * 4 bytes (3 floats for pos, 2 floats for texcoord)
-  // Position attribute (vec3): 3 components, FLOAT, stride 20 bytes, offset 0
   gl.vertexAttribPointer(attribLocations.aPosition, 3, gl.FLOAT, false, 5 * 4, 0);
   gl.enableVertexAttribArray(attribLocations.aPosition);
-
-  // Texture coordinate attribute (vec2): 2 components, FLOAT, stride 20 bytes, offset 12 bytes (3 * 4)
   gl.vertexAttribPointer(attribLocations.aTexCoord, 2, gl.FLOAT, false, 5 * 4, 3 * 4);
   gl.enableVertexAttribArray(attribLocations.aTexCoord);
 
-  // Set model matrix uniform
   gl.uniformMatrix4fv(uniformLocations.uModel, false, modelMatrix);
 
-  // Set texture uniform
-  gl.activeTexture(gl.TEXTURE0); // Activate texture unit 0
+  gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.uniform1i(uniformLocations.uTexture, 0); // Tell shader to use texture unit 0
+  gl.uniform1i(uniformLocations.uTexture, 0);
 
-  // Draw the triangles
   gl.drawArrays(gl.TRIANGLES, 0, bufferObj.vertexCount);
-
-   // It's good practice to disable vertex attrib arrays after drawing, though not strictly necessary if next draw call sets them up again.
-  // gl.disableVertexAttribArray(attribLocations.aPosition);
-  // gl.disableVertexAttribArray(attribLocations.aTexCoord);
 }
 
 // ============================ 2D Overlay Functions ============================
-    // Draw the full, draggable map
 function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMapOffsetY, windowWidth, windowHeight) {
-  const cellSize = 10; // Smaller cells for full map
+  const cellSize = 10;
   const cols = maze[0].length;
   const rows = maze.length;
   const mapWidth = cols * cellSize;
   const mapHeight = rows * cellSize;
 
-  // Clip drawing to the canvas bounds for efficiency (optional but good practice)
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, windowWidth, windowHeight);
   ctx.clip();
 
-  // Draw map background (optional, can make seeing boundaries easier)
-  // ctx.fillStyle = "rgba(50, 50, 50, 0.8)";
-  // ctx.fillRect(fullMapOffsetX - 5, fullMapOffsetY - 5, mapWidth + 10, mapHeight + 10);
-
-
-  // Draw grid lines (optional)
-  // ctx.strokeStyle = "rgba(100, 100, 100, 0.5)";
-  // ctx.lineWidth = 0.5;
-  // for (let i = 0; i <= rows; i++) {
-  //     ctx.beginPath();
-  //     ctx.moveTo(fullMapOffsetX, fullMapOffsetY + i * cellSize);
-  //     ctx.lineTo(fullMapOffsetX + mapWidth, fullMapOffsetY + i * cellSize);
-  //     ctx.stroke();
-  // }
-  // for (let j = 0; j <= cols; j++) {
-  //      ctx.beginPath();
-  //      ctx.moveTo(fullMapOffsetX + j * cellSize, fullMapOffsetY);
-  //      ctx.lineTo(fullMapOffsetX + j * cellSize, fullMapOffsetY + mapHeight);
-  //      ctx.stroke();
-  // }
-
-
-  // Draw maze cells
   for (let i = 0; i < rows; i++) {
     for (let j = 0; j < cols; j++) {
       let x = fullMapOffsetX + j * cellSize;
       let y = fullMapOffsetY + i * cellSize;
 
-      // Optimization: Only draw cells potentially visible on screen
       if (x + cellSize < 0 || x > windowWidth || y + cellSize < 0 || y > windowHeight) {
           continue;
       }
-      // Check if discovered array is initialized and has this cell
       if (discovered && discovered[i] && discovered[i][j] !== undefined) {
             if (discovered[i][j]) {
                 const cell = maze[i].charAt(j);
-                if (cell === "#") ctx.fillStyle = "rgb(80, 80, 80)";       // Dark Grey Wall
-                else if (cell === "E") ctx.fillStyle = "rgb(255, 60, 60)";  // Bright Red Exit
-                else if (cell === "B") ctx.fillStyle = "rgb(40, 40, 40)";   // Very Dark Grey Bulk Wall
-                else ctx.fillStyle = "rgb(200, 200, 200)"; // Light Grey Floor
+                if (cell === "#") ctx.fillStyle = "rgb(80, 80, 80)";
+                else if (cell === "E") ctx.fillStyle = "rgb(255, 60, 60)";
+                else if (cell === "B") ctx.fillStyle = "rgb(40, 40, 40)";
+                else ctx.fillStyle = "rgb(200, 200, 200)";
             } else {
-                ctx.fillStyle = "rgb(20, 20, 20)"; // Undiscovered area
+                ctx.fillStyle = "rgb(20, 20, 20)";
             }
        } else {
-            // Handle cases where discovered might not be fully initialized yet (should be rare)
-            ctx.fillStyle = "rgb(10, 10, 10)"; // Very dark grey for potentially uninitialized areas
-            // Log error if needed: console.warn(`Discovered cell [${i}][${j}] is undefined`);
+            ctx.fillStyle = "rgb(10, 10, 10)";
        }
-      ctx.fillRect(x, y, cellSize, cellSize); // Draw the cell
+      ctx.fillRect(x, y, cellSize, cellSize);
     }
   }
 
-  // Draw Player Icon (Arrow indicating direction)
-  const playerMapX = fullMapOffsetX + playerPos[0] * cellSize; // Use exact playerPos for smooth icon movement
+  const playerMapX = fullMapOffsetX + playerPos[0] * cellSize;
   const playerMapY = fullMapOffsetY + playerPos[2] * cellSize;
   const playerSize = cellSize * 0.8;
   const angleRad = toRadian(playerAngle);
 
   ctx.save();
   ctx.translate(playerMapX, playerMapY);
-  ctx.rotate(-angleRad); // Rotate the context for the arrow
+  ctx.rotate(-angleRad);
   ctx.fillStyle = "lime";
   ctx.beginPath();
-  ctx.moveTo(0, playerSize / 2); // Arrow tip (forward)
-  ctx.lineTo(-playerSize / 3, -playerSize / 3); // Back left corner
-  ctx.lineTo(playerSize / 3, -playerSize / 3); // Back right corner
+  ctx.moveTo(0, playerSize / 2);
+  ctx.lineTo(-playerSize / 3, -playerSize / 3);
+  ctx.lineTo(playerSize / 3, -playerSize / 3);
   ctx.closePath();
   ctx.fill();
-  ctx.restore(); // Restore context rotation/translation
+  ctx.restore();
 
-  // Draw Bot Path (if active and path exists)
    if (botMode && botPath && botPath.length > 0) {
-       ctx.strokeStyle = "rgba(0, 255, 255, 0.7)"; // Cyan path
+       ctx.strokeStyle = "rgba(0, 255, 255, 0.7)";
        ctx.lineWidth = Math.max(1, cellSize / 4);
        ctx.beginPath();
-       // Start path from current player position for smoothness
        ctx.moveTo(playerMapX, playerMapY);
-       // Draw line segments for the rest of the path
        for (let k = botPathIndex; k < botPath.length; k++) {
            let node = botPath[k];
            ctx.lineTo(fullMapOffsetX + (node.x + 0.5) * cellSize, fullMapOffsetY + (node.y + 0.5) * cellSize);
@@ -1578,32 +1456,26 @@ function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMap
        ctx.stroke();
    }
 
-
-  ctx.restore(); // Restore clipping
+  ctx.restore();
 }
 
-// Draw the corner minimap
 function drawMinimap(ctx, maze, discovered, playerCoord, windowWidth, windowHeight) {
-  const regionSize = 15; // How many cells across/down the minimap shows
-  const cellSize = 6;   // Small cells for minimap
+  const regionSize = 15;
+  const cellSize = 6;
   const margin = 15;
   const mapWidthPixels = regionSize * cellSize;
   const mapHeightPixels = regionSize * cellSize;
   const startX = windowWidth - mapWidthPixels - margin;
   const startY = margin;
 
-  // Background for minimap
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.fillRect(startX - 3, startY - 3, mapWidthPixels + 6, mapHeightPixels + 6);
    ctx.strokeStyle = "rgba(150, 150, 150, 0.8)";
    ctx.lineWidth = 1;
    ctx.strokeRect(startX - 3, startY - 3, mapWidthPixels + 6, mapHeightPixels + 6);
 
-
-  const playerCellX = Math.floor(playerPos[0]); // Use floor for grid alignment
+  const playerCellX = Math.floor(playerPos[0]);
   const playerCellY = Math.floor(playerPos[2]);
-
-  // Calculate top-left cell index for the minimap view
   const startCellX = playerCellX - Math.floor(regionSize / 2);
   const startCellY = playerCellY - Math.floor(regionSize / 2);
 
@@ -1614,9 +1486,7 @@ function drawMinimap(ctx, maze, discovered, playerCoord, windowWidth, windowHeig
       const drawX = startX + j * cellSize;
       const drawY = startY + i * cellSize;
 
-      // Check if the cell is within maze bounds
       if (mazeY >= 0 && mazeY < maze.length && mazeX >= 0 && mazeX < maze[0].length) {
-          // Check if discovered array is initialized and has this cell
           if (discovered && discovered[mazeY] && discovered[mazeY][mazeX] !== undefined) {
               if (discovered[mazeY][mazeX]) {
                   const cell = maze[mazeY].charAt(mazeX);
@@ -1625,23 +1495,21 @@ function drawMinimap(ctx, maze, discovered, playerCoord, windowWidth, windowHeig
                   else if (cell === "B") ctx.fillStyle = "rgb(40, 40, 40)";
                   else ctx.fillStyle = "rgb(200, 200, 200)";
               } else {
-                  ctx.fillStyle = "rgb(20, 20, 20)"; // Undiscovered
+                  ctx.fillStyle = "rgb(20, 20, 20)";
               }
           } else {
-              ctx.fillStyle = "rgb(10, 10, 10)"; // Very dark for uninitialized/out of bounds
+              ctx.fillStyle = "rgb(10, 10, 10)";
           }
       } else {
-          ctx.fillStyle = "rgba(0, 0, 0, 0)"; // Outside maze bounds (transparent)
+          ctx.fillStyle = "rgba(0, 0, 0, 0)";
       }
       ctx.fillRect(drawX, drawY, cellSize, cellSize);
     }
   }
 
-   // Draw Player Icon on Minimap (Arrow indicating direction)
-   // Position relative to the minimap's top-left corner
    const playerMiniMapX = startX + (playerPos[0] - startCellX) * cellSize;
    const playerMiniMapY = startY + (playerPos[2] - startCellY) * cellSize;
-   const playerSize = cellSize * 1.2; // Slightly larger icon
+   const playerSize = cellSize * 1.2;
    const angleRad = toRadian(playerAngle);
 
    ctx.save();
@@ -1649,7 +1517,7 @@ function drawMinimap(ctx, maze, discovered, playerCoord, windowWidth, windowHeig
    ctx.rotate(-angleRad);
    ctx.fillStyle = "lime";
    ctx.beginPath();
-   ctx.moveTo(0, playerSize * 0.6); // Arrow tip
+   ctx.moveTo(0, playerSize * 0.6);
    ctx.lineTo(-playerSize * 0.4, -playerSize * 0.4);
    ctx.lineTo(playerSize * 0.4, -playerSize * 0.4);
    ctx.closePath();
@@ -1657,23 +1525,19 @@ function drawMinimap(ctx, maze, discovered, playerCoord, windowWidth, windowHeig
    ctx.restore();
 }
 
-// Main function to update the entire 2D overlay canvas
 function updateOverlay() {
   const overlay = document.getElementById("mazeCanvas");
-  // Ensure overlay and context are valid
    if (!overlay) return;
    const ctx = overlay.getContext("2d");
    if (!ctx) return;
 
-   // Ensure overlay matches window size (handle resize)
    if (overlay.width !== window.innerWidth || overlay.height !== window.innerHeight) {
         overlay.width = window.innerWidth;
         overlay.height = window.innerHeight;
    }
 
-  ctx.clearRect(0, 0, overlay.width, overlay.height); // Clear previous frame
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-  // ================== NEW: AUTO-MAP STATE MACHINE ==================
   if (botMode && autoMapState !== 'IDLE') {
       const now = performance.now();
       const elapsed = now - autoMapTimer;
@@ -1681,74 +1545,56 @@ function updateOverlay() {
       switch (autoMapState) {
           case 'INITIAL_WAIT':
               if (elapsed >= autoMapInitialWait) {
-                  console.log("Auto-map: Opening map.");
                   fullMapVisible = true;
                   autoMapState = 'MAP_OPEN';
-                  autoMapTimer = now; // Reset timer for the next state
+                  autoMapTimer = now;
               }
               break;
-
           case 'MAP_OPEN':
               if (elapsed >= autoMapOpenDuration) {
-                  console.log("Auto-map: Closing map.");
                   fullMapVisible = false;
                   autoMapState = 'MAP_CLOSED_WAIT';
-                  autoMapTimer = now; // Reset timer
+                  autoMapTimer = now;
               }
               break;
-
           case 'MAP_CLOSED_WAIT':
               if (elapsed >= autoMapClosedWaitDuration) {
-                  console.log("Auto-map: Re-opening map.");
                   fullMapVisible = true;
-                  autoMapState = 'MAP_OPEN'; // Go back to the open state to loop
-                  autoMapTimer = now; // Reset timer
+                  autoMapState = 'MAP_OPEN';
+                  autoMapTimer = now;
               }
               break;
       }
   }
-  // =================================================================
 
-  // Check if maze data is loaded before drawing maps
   if (!mazeData || !mazeData.maze || !discovered) {
-      console.warn("Overlay update skipped: Maze data not ready.");
-      return; // Don't draw if data isn't ready
+      return;
   }
 
-
-  // --- Draw Map Components ---
-  const playerCoord = { x: playerPos[0], y: playerPos[2] }; // Pass precise coords
+  const playerCoord = { x: playerPos[0], y: playerPos[2] };
 
   if (fullMapVisible) {
-    // Center the map view based on player position initially, adjusted by drag offset
-    const mapCellSize = 10; // Cell size used in drawFullMap
+    const mapCellSize = 10;
     let viewCenterX = overlay.width / 2;
     let viewCenterY = overlay.height / 2;
     let playerScreenX = playerCoord.x * mapCellSize;
     let playerScreenY = playerCoord.y * mapCellSize;
-
-    // Calculate the top-left corner offset needed to center the player, then apply drag
     let initialOffsetX = viewCenterX - playerScreenX;
     let initialOffsetY = viewCenterY - playerScreenY;
-
     drawFullMap(ctx, mazeData.maze, discovered, playerCoord, initialOffsetX + dragOffsetX, initialOffsetY + dragOffsetY, overlay.width, overlay.height);
   } else {
-    // Draw only the minimap if full map is hidden
     drawMinimap(ctx, mazeData.maze, discovered, playerCoord, overlay.width, overlay.height);
   }
 
-
-  // --- Draw Help Text ---
   if (helpVisible) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
-    const boxWidth = 320; // Wider box
-    const boxHeight = 290; // Taller box for more info
+    const boxWidth = 320;
+    const boxHeight = 290;
     const boxX = 10;
     const boxY = 10;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
-
     ctx.fillStyle = "white";
-    ctx.font = "14px monospace"; // Slightly smaller font
+    ctx.font = "14px monospace";
     const lineHeight = 18;
     let textX = boxX + 15;
     let textY = boxY + 30;
@@ -1778,83 +1624,58 @@ function updateOverlay() {
       ctx.fillText(instructions[i], textX, textY + i * lineHeight);
     }
   } else {
-     // Show hint only if help is off and full map isn't being dragged
      if(!isDragging) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
         ctx.font = "16px monospace";
-        ctx.textAlign = "left"; // Reset alignment
+        ctx.textAlign = "left";
         ctx.fillText("H for Help", 10, overlay.height - 20);
      }
   }
 
-
-  // --- Auto-Start Logic & Display ---
   const now = performance.now();
   ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
   ctx.font = "bold 20px monospace";
   ctx.textAlign = "center";
   const centerX = overlay.width / 2;
-  const centerY = overlay.height - 40; // Position near bottom center
+  const centerY = overlay.height - 40;
 
-
-  if (!botMode && !autoStarted) { // Only show countdown if bot is OFF and hasn't auto-started yet
+  if (!botMode && !autoStarted) {
       const elapsed = now - lastManualInputTime;
       if (elapsed < countdownDuration) {
           const secs = Math.ceil((countdownDuration - elapsed) / 1000);
           ctx.fillText(`Auto-Bot Starting in: ${secs}s`, centerX, centerY);
       } else {
-          // Time's up! Auto-start the bot
           console.log("Auto-starting bot in Explore mode.");
-          autoStarted = true; // Mark as auto-started
-          botMode = true; // Enable bot mode
-          selectedAlgorithm = "explore"; // Force explore mode on auto-start
-          computeBotPath(); // Calculate the path
-
-          // NEW: Start the auto-map cycle when the bot auto-starts
+          autoStarted = true;
+          botMode = true;
+          selectedAlgorithm = "explore";
+          computeBotPath();
           autoMapState = 'INITIAL_WAIT';
           autoMapTimer = performance.now();
       }
   }
 
-  // Display status message if bot is running (either manually or auto-started)
    if (botMode) {
        let statusText = `Bot Active (${selectedAlgorithm.toUpperCase()}). Press B to toggle.`;
        ctx.fillText(statusText, centerX, centerY);
-   } else if (autoStarted) {
-       // If bot was auto-started but then manually turned off (botMode is false),
-       // maybe show nothing or a different message?
-       // For now, if !botMode, the countdown logic above handles restarting the timer.
-       // So, we don't need a specific message here unless we want one like "Auto-bot paused".
    }
 
-   // Reset text alignment if other text uses it
    ctx.textAlign = "left";
 }
 
 // ============================ Window Load & Resize ============================
-window.onload = init; // Call init when the window (and its resources) are loaded
+window.onload = init;
 
- // Handle window resize
  window.onresize = () => {
-     // Check if gl context exists before proceeding
      if (!gl) return;
-
      const canvas = document.getElementById("glCanvas");
      const overlay = document.getElementById("mazeCanvas");
-
-     // Ensure canvases exist before resizing
      if (!canvas || !overlay) return;
-
      canvas.width = window.innerWidth;
      canvas.height = window.innerHeight;
      overlay.width = window.innerWidth;
      overlay.height = window.innerHeight;
-
-     // Update WebGL viewport
      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-     // Re-draw overlay immediately after resize for responsiveness
-     // Need to ensure mazeData is loaded before calling updateOverlay here
      if (mazeData && discovered) {
         updateOverlay();
      }
