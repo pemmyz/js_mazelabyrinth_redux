@@ -442,7 +442,7 @@ const mazeWidth = 100, mazeHeight = 100, maxRooms = 40, roomMinSize = 5, roomMax
 let fullMapVisible = false;
 let lastFrameTime = 0; // For delta time calculation
 
-// NEW: State for help menu and movement style
+// State for help menu and movement style
 let helpVisible = false;
 let movementStyle = 'smooth'; // 'smooth' or 'block'
 
@@ -899,7 +899,7 @@ function handleTurnRight() {
 }
 
 
-// ============================ Keyboard Controls (MODIFIED) ============================
+// ============================ Keyboard Controls ============================
 function onKeyDown(e) {
   let isManualAction = false;
   let key = e.key.toLowerCase();
@@ -940,12 +940,12 @@ function onKeyDown(e) {
       case "h":
           helpVisible = !helpVisible;
           return;
-      // NEW: Key to toggle movement style
       case "n":
           movementStyle = (movementStyle === 'smooth') ? 'block' : 'smooth';
           console.log("Movement style set to:", movementStyle);
-          // Toggling movement style doesn't reset the auto-start timer
-          return; // Return here to avoid falling through
+          // This toggle is a general setting, so it doesn't count as a direct "manual action"
+          // that should reset the auto-bot timer.
+          return;
   }
 
   // 2) Handle Manual Player Movement
@@ -1002,27 +1002,15 @@ function updateDiscovered() {
   const pz = Math.floor(playerPos[2]);
   const viewDistance = 5; // How many cells ahead/sides to reveal
 
-  // Simple rectangular visibility cone for now
-  const angleRad = toRadian(playerAngle);
-  const dx = Math.sin(angleRad);
-  const dz = Math.cos(angleRad);
-
   for (let i = -viewDistance; i <= viewDistance; i++) {
     for (let j = -viewDistance; j <= viewDistance; j++) {
-      // Check if cell is within a forward-facing cone/rectangle area
-      // This is a very rough approximation - could be improved
       let checkX = px + j;
       let checkZ = pz + i;
 
-      // Basic distance check
       if (Math.sqrt(i*i + j*j) > viewDistance + 1) continue;
 
-      // Reveal cells within bounds
       if (checkZ >= 0 && checkZ < mazeHeight && checkX >= 0 && checkX < mazeWidth) {
-          // Basic line of sight check (very simple, doesn't handle corners well)
-          // Only reveal if there isn't a wall directly between player and cell
           let wallInWay = false;
-          // Simple check: if target is further than 1 cell, check intermediate cells
           if (Math.abs(i)>1 || Math.abs(j)>1) {
                let midX = Math.floor(px + j * 0.5);
                let midZ = Math.floor(pz + i * 0.5);
@@ -1040,7 +1028,6 @@ function updateDiscovered() {
       }
     }
   }
-   // Always ensure the player's current cell is discovered
    if (pz >= 0 && pz < mazeHeight && px >= 0 && px < mazeWidth) {
        discovered[pz][px] = true;
    }
@@ -1141,7 +1128,6 @@ function init() {
       alert("Error: Could not find mazeCanvas element!");
       return;
   }
-  // MODIFIED: Removed the click listener as it's no longer needed
   overlay.addEventListener("mousedown", onMouseDown, false);
   overlay.addEventListener("mousemove", onMouseMove, false);
   overlay.addEventListener("mouseup", onMouseUp, false);
@@ -1183,12 +1169,12 @@ function initBuffer(dataArray) {
   };
 }
 
-// ============================ Render Loop ============================
+// ============================ Render Loop (MODIFIED) ============================
 function render(now) {
   const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
 
-  // --- Update Animation States (Bot Movement, Player Turning, and Block Movement) ---
+  // --- Update Animation States ---
   if (animatingTranslation) {
     let t = (performance.now() - translationStart) / translationDuration;
     t = Math.min(t, 1.0);
@@ -1216,7 +1202,6 @@ function render(now) {
 
   // -------- Handle Manual Player Movement -----------
   if (!botMode) {
-      // Continuous forward/backward movement ONLY happens in 'smooth' mode.
       if (movementStyle === 'smooth') {
           const manualMoveSpeed = 4.5;
           let moveX = 0;
@@ -1243,7 +1228,6 @@ function render(now) {
           }
       }
 
-      // Turning is handled for BOTH movement styles here.
       if (!animatingRotation) {
           if (keysDown["a"] || keysDown["arrowleft"]) {
               handleTurnLeft();
@@ -1254,7 +1238,7 @@ function render(now) {
   }
 
 
-  // -------- Bot mode automatic movement logic -----------
+  // -------- Bot mode automatic movement logic (MODIFIED)-----------
   if (botMode && !animatingTranslation && !animatingRotation) {
       if (botPath && botPath.length > 0 && botPathIndex < botPath.length) {
         let nextCell = botPath[botPathIndex];
@@ -1290,10 +1274,18 @@ function render(now) {
                 targetAngle = desiredAngle;
             } else {
                 if (canMove(targetX, targetZ)) {
-                    animatingTranslation = true;
-                    translationStart = performance.now();
-                    startPos = [...playerPos];
-                    targetPos = [targetX, playerPos[1], targetZ];
+                    // NEW: Check movement style to determine if bot animates or teleports.
+                    if (movementStyle === 'smooth') {
+                        // Animate the bot's movement to the next cell.
+                        animatingTranslation = true;
+                        translationStart = performance.now();
+                        startPos = [...playerPos];
+                        targetPos = [targetX, playerPos[1], targetZ];
+                    } else { // 'block' style
+                        // Instantly move the bot to the next cell.
+                        playerPos = [targetX, playerPos[1], targetZ];
+                        updateDiscovered(); // Update map immediately since move was instant.
+                    }
                 } else {
                     console.warn("Bot collision detected. Recomputing.");
                     computeBotPath();
@@ -1389,7 +1381,7 @@ function render(now) {
   gl.drawArrays(gl.TRIANGLES, 0, bufferObj.vertexCount);
 }
 
-// ============================ 2D Overlay Functions (MODIFIED) ============================
+// ============================ 2D Overlay Functions ============================
 function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMapOffsetY, windowWidth, windowHeight) {
   const cellSize = 10;
   const cols = maze[0].length;
@@ -1584,11 +1576,11 @@ function updateOverlay() {
     drawMinimap(ctx, mazeData.maze, discovered, playerCoord, overlay.width, overlay.height);
   }
 
-  // MODIFIED: Draw the help menu with the new keybinding
+  // MODIFIED: Draw the help menu with updated text
   if (helpVisible) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    const boxWidth = 350;
-    const boxHeight = 360; // Adjusted height
+    const boxWidth = 380; // Make box a bit wider for new text
+    const boxHeight = 360;
     const boxX = 20;
     const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
@@ -1601,7 +1593,7 @@ function updateOverlay() {
     let textY = boxY + 35;
     
     const instructions = [
-      "======= MAZE EXPLORER =======",
+      "========= MAZE EXPLORER =========",
       "CONTROLS:",
       " W/Up Arrow   : Move Forward",
       " S/Down Arrow : Move Backward",
@@ -1610,9 +1602,9 @@ function updateOverlay() {
       " M            : Toggle Full Map",
       "                (Drag to Pan)",
       " H            : Toggle Help (This)",
-      " N            : Toggle Movement Style", // NEW
+      // MODIFIED: Clarified that N affects both player and bot
+      " N            : Toggle Player/Bot Move Style",
       "",
-      // NEW: Show current movement style
       "Current Style: " + (movementStyle.charAt(0).toUpperCase() + movementStyle.slice(1)),
       "",
       "BOT MODE:",
@@ -1626,7 +1618,6 @@ function updateOverlay() {
     ];
 
     for (let i = 0; i < instructions.length; i++) {
-      // Indent sub-items for clarity
       if (instructions[i].trim().startsWith("(")) {
         ctx.fillText(instructions[i], textX + 15, textY + i * lineHeight);
       } else {
@@ -1635,7 +1626,6 @@ function updateOverlay() {
     }
 
   } else {
-     // Draw a small hint to open the help menu
      if(!isDragging) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
         ctx.font = "16px monospace";
@@ -1672,7 +1662,7 @@ function updateOverlay() {
        let statusText = `Bot Active (${selectedAlgorithm.toUpperCase()}). Press B to toggle.`;
        ctx.fillText(statusText, centerX, centerY);
    }
-   ctx.textAlign = "left"; // Reset alignment for other potential draws
+   ctx.textAlign = "left";
 }
 
 // ============================ Window Load & Resize ============================
