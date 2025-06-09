@@ -440,13 +440,18 @@ let playerPos = [2.5, 0.0, 2.5]; // Initial placeholder
 let playerAngle = 0; // Facing positive Z
 const mazeWidth = 100, mazeHeight = 100, maxRooms = 40, roomMinSize = 5, roomMaxSize = 9; // Adjusted maze params
 let fullMapVisible = false;
-let helpVisible = false; // Start with help hidden
 let lastFrameTime = 0; // For delta time calculation
 
-// Animation variables for smooth movement (used by bot and player turning).
+// NEW: State for help menu and movement style
+let helpVisible = false;
+let movementStyle = 'smooth'; // 'smooth' or 'block'
+let moveToggleButtonRect = {}; // Stores the position of the movement toggle button for click detection
+
+// Animation variables for smooth movement.
 let animatingTranslation = false;
 let translationStart = 0;
-const translationDuration = 50; // milliseconds for bot movement step
+// MODIFIED: Make translation duration slightly faster for a "snappier" block move feel.
+const translationDuration = 150; // milliseconds for movement step (bot or player block move)
 let startPos = [0, 0, 0];
 let targetPos = [0, 0, 0];
 
@@ -792,15 +797,12 @@ function restartGame() {
   console.log("Exit reached! Restarting game with new map.");
   let newSeed = Date.now(); // Use timestamp for a new seed each time
   mazeData = createMap(mazeWidth, mazeHeight, maxRooms, roomMinSize, roomMaxSize, newSeed);
-  //mazeData.maze.forEach(row => console.log(row)); // Log the new maze layout
 
-  // Reset discovered map (make all undiscovered initially)
+  // Reset discovered map
   discovered = [];
   for (let i = 0; i < mazeData.maze.length; i++) {
     discovered[i] = [];
     for (let j = 0; j < mazeData.maze[i].length; j++) {
-      // Start with only the starting cell discovered, or maybe none?
-      // Let's make all undiscovered for a fresh start.
       discovered[i][j] = false;
     }
   }
@@ -814,10 +816,9 @@ function restartGame() {
     playerPos[0] = spawnRoom.center[0] + 0.5; // Center of the grid cell
     playerPos[2] = spawnRoom.center[1] + 0.5;
   } else {
-      // Fallback if no rooms generated (shouldn't happen with good generation)
+      // Fallback if no rooms generated
       console.warn("No rooms found for spawn, placing player at default [1.5, 0, 1.5]");
-      playerPos = [1.5, 0.0, 1.5]; // A default valid starting spot
-      // Try to find *any* open space if default fails
+      playerPos = [1.5, 0.0, 1.5];
       let foundSpawn = false;
        for (let z = 1; z < mazeHeight - 1; z++) {
            for (let x = 1; x < mazeWidth - 1; x++) {
@@ -831,7 +832,6 @@ function restartGame() {
        }
        if (!foundSpawn) {
             console.error("Could not find any valid spawn point in the maze!");
-            // Handle this critical error? Maybe alert user or stop game?
        }
   }
 
@@ -846,7 +846,6 @@ function restartGame() {
   autoStarted = false; // Reset auto-start flag
   lastManualInputTime = performance.now(); // Reset auto-start timer
 
-  // NEW: Reset the auto-map state
   autoMapState = 'IDLE';
   autoMapTimer = 0;
   fullMapVisible = false; // Ensure map is closed on restart
@@ -862,7 +861,6 @@ function onMouseDown(e) {
      isDragging = true;
      dragStartX = e.clientX;
      dragStartY = e.clientY;
-     // Dragging is a manual action, reset auto-start timer
      lastManualInputTime = performance.now();
      autoStarted = false;
      e.preventDefault(); // Prevent text selection while dragging
@@ -883,105 +881,137 @@ function onMouseUp(e) {
   }
 }
 
-// ============================ Movement Helper Functions (MODIFIED) ============================
-const turnSpeed = 90;   // Degrees per turn key press
+// NEW: Click handler for UI elements on the canvas (like the movement toggle button)
+function onCanvasClick(e) {
+    if (!helpVisible) return; // Buttons are only active when help menu is visible
 
-// handleMoveForward and handleMoveBackward are no longer used for manual movement.
-// They are replaced by a continuous movement model in the render loop.
-// The bot sets its animation properties directly.
+    const rect = document.getElementById("mazeCanvas").getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Check if click is inside the movement toggle button
+    if (clickX >= moveToggleButtonRect.x && clickX <= moveToggleButtonRect.x + moveToggleButtonRect.width &&
+        clickY >= moveToggleButtonRect.y && clickY <= moveToggleButtonRect.y + moveToggleButtonRect.height) {
+        
+        movementStyle = (movementStyle === 'smooth') ? 'block' : 'smooth';
+        console.log("Movement style set to:", movementStyle);
+
+        // Redraw overlay to show new button state immediately
+        updateOverlay(); 
+    }
+}
+
+
+// ============================ Movement Helper Functions ============================
+const turnSpeed = 90; // Degrees per turn key press
 
 function handleTurnLeft() {
-    if (animatingRotation) return; // Prevent re-triggering while an animation is in progress
+    if (animatingRotation) return;
     animatingRotation=true;
     rotationStart=performance.now();
     startAngle=playerAngle;
-    // Ensure target angle wraps correctly (e.g., 0 + 90 = 90, 270 + 90 = 0)
     targetAngle = (playerAngle + turnSpeed + 360) % 360;
-    // Timer reset is handled in onKeyDown
 }
 
 function handleTurnRight() {
-    if (animatingRotation) return; // Prevent re-triggering while an animation is in progress
+    if (animatingRotation) return;
     animatingRotation=true;
     rotationStart=performance.now();
     startAngle=playerAngle;
-    // Ensure target angle wraps correctly (e.g., 0 - 90 = 270)
     targetAngle = (playerAngle - turnSpeed + 360) % 360;
-    // Timer reset is handled in onKeyDown
 }
 
 
-// ============================ Keyboard Controls ============================
+// ============================ Keyboard Controls (MODIFIED) ============================
 function onKeyDown(e) {
-  // This function now primarily handles toggles, algorithm selection,
-  // and resetting the auto-start timer on *any* relevant key press.
-  // Continuous movement is handled in the render loop based on keysDown state.
-
-  let isManualAction = false; // Flag to check if countdown should reset
+  let isManualAction = false;
   let key = e.key.toLowerCase();
 
-  // 1) Always handle toggles & bot/algorithm keys:
+  // 1) Handle Toggles & Bot Keys
   switch (key) {
       case "b":
           botMode = !botMode;
           console.log("Bot mode " + (botMode ? "enabled" : "disabled"));
           if (botMode) {
-              computeBotPath(); // Compute path if enabling
-              // NEW: Start the auto-map cycle
+              computeBotPath();
               autoMapState = 'INITIAL_WAIT';
               autoMapTimer = performance.now();
           } else {
-              // NEW: Stop the auto-map cycle and close the map
               autoMapState = 'IDLE';
               fullMapVisible = false;
           }
-          // Toggling bot mode IS a manual action
           isManualAction = true;
           break;
       case "1": case "2": case "3": case "4":
           const algMap = { "1":"bfs","2":"dfs","3":"astar","4":"explore" };
           selectedAlgorithm = algMap[key];
           console.log("Algorithm selected:", selectedAlgorithm.toUpperCase());
-          if (botMode) {
-              computeBotPath(); // Recompute path if bot is already running
-          }
-          // Selecting algorithm is a manual action ONLY if bot is currently OFF
-          if (!botMode) {
-              isManualAction = true;
-          }
+          if (botMode) computeBotPath();
+          if (!botMode) isManualAction = true;
           break;
       case "m":
           fullMapVisible = !fullMapVisible;
-
-          // NEW: If user manually toggles map, disable the auto-toggling feature for this session
           if (botMode) {
               console.log("Manual map override: Disabling auto-map.");
               autoMapState = 'IDLE';
           }
-
-          // Reset drag offset when toggling map, keep center focused on player
           if (fullMapVisible) {
               dragOffsetX = 0;
               dragOffsetY = 0;
           }
-          // Toggling map doesn't reset the auto-start timer
-          return; // Return here
+          return;
+      // NEW: Help menu toggle
       case "h":
           helpVisible = !helpVisible;
-          // Toggling help doesn't reset the auto-start timer
-          return; // Return here
+          return;
   }
 
-  // 2) Check if the pressed key is a movement key to reset the timer
-  //    (even if movement is blocked by bot/animation, pressing the key counts as manual input)
+  // 2) Handle Manual Player Movement
+  // MODIFIED: This section now handles block-based movement directly.
+  // Smooth movement is handled in the render loop.
+  if (!botMode && movementStyle === 'block') {
+      if (['w', 's', 'arrowup', 'arrowdown'].includes(key)) {
+          // If already animating a move or turn, ignore new movement commands
+          if (animatingTranslation || animatingRotation) return;
+          
+          const moveDir = (key === 'w' || key === 'arrowup') ? 1 : -1;
+          
+          const angleRad = toRadian(playerAngle);
+          const dx = Math.sin(angleRad) * moveDir;
+          const dz = Math.cos(angleRad) * moveDir;
+          
+          let targetGridX = Math.round(playerPos[0] - 0.5);
+          let targetGridZ = Math.round(playerPos[2] - 0.5);
+
+          // Determine dominant axis for grid-based movement
+          if (Math.abs(dx) > Math.abs(dz)) {
+              targetGridX += Math.sign(dx);
+          } else {
+              targetGridZ += Math.sign(dz);
+          }
+          
+          // Collision check against the target grid cell
+          if (targetGridZ >= 0 && targetGridZ < mazeHeight && targetGridX >= 0 && targetGridX < mazeWidth) {
+              const cell = mazeData.maze[targetGridZ].charAt(targetGridX);
+              if (cell !== '#' && cell !== 'B') {
+                  // Valid move, set up animation to the center of the target block
+                  animatingTranslation = true;
+                  translationStart = performance.now();
+                  startPos = [...playerPos];
+                  targetPos = [targetGridX + 0.5, playerPos[1], targetGridZ + 0.5];
+              }
+          }
+      }
+  }
+
+  // 3) Check for any key that constitutes manual input to reset the auto-bot timer
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
        isManualAction = true;
   }
 
-  // 3) Reset auto-start timer if any manual action occurred
   if (isManualAction) {
        lastManualInputTime = performance.now();
-       autoStarted = false; // Reset auto-start state
+       autoStarted = false;
   }
 }
 
@@ -1040,7 +1070,6 @@ function updateDiscovered() {
 // ============================ Initialization ============================
 function init() {
   const canvas = document.getElementById("glCanvas");
-  // Check if canvas exists before trying to set width/height
   if (!canvas) {
       alert("Error: Could not find glCanvas element!");
       return;
@@ -1052,7 +1081,6 @@ function init() {
     alert("WebGL not supported. Please use a modern browser like Chrome or Firefox.");
     return;
   }
-  // Log GL capabilities
   console.log("WebGL Vendor:", gl.getParameter(gl.VENDOR));
   console.log("WebGL Renderer:", gl.getParameter(gl.RENDERER));
   console.log("WebGL Version:", gl.getParameter(gl.VERSION));
@@ -1062,7 +1090,7 @@ function init() {
   shaderProgram = initShaderProgram(gl, vsSource, fsSource);
    if (!shaderProgram) {
       console.error("Failed to initialize shader program.");
-      return; // Stop initialization if shaders fail
+      return;
   }
   attribLocations = {
     aPosition: gl.getAttribLocation(shaderProgram, "aPosition"),
@@ -1075,34 +1103,25 @@ function init() {
     uTexture: gl.getUniformLocation(shaderProgram, "uTexture")
   };
 
-  // Check if attributes/uniforms were found
   if (attribLocations.aPosition < 0 || attribLocations.aTexCoord < 0 ||
       !uniformLocations.uProjection || !uniformLocations.uView ||
       !uniformLocations.uModel || !uniformLocations.uTexture) {
       console.error("Failed to get shader locations.");
-      // Optionally provide more specific error messages
-      if(attribLocations.aPosition < 0) console.error("aPosition location not found");
-      // ... etc
-      return; // Stop if locations are missing
+      return;
   }
 
-
-  // Load textures (provide placeholder paths or actual image URLs)
   textures.ground = loadTexture(gl, "ground.jpg");
   textures.roof   = loadTexture(gl, "roof.jpg");
   textures.brick  = loadTexture(gl, "brick.jpg");
   textures.exit   = loadTexture(gl, "exit.png");
 
-  // Initial maze generation
   mazeData = createMap(mazeWidth, mazeHeight, maxRooms, roomMinSize, roomMaxSize, Date.now());
 
-  // Place player in the first room
   if (mazeData.rooms && mazeData.rooms.length > 0) {
     let spawnRoom = mazeData.rooms[0];
     playerPos[0] = spawnRoom.center[0] + 0.5;
     playerPos[2] = spawnRoom.center[1] + 0.5;
   } else {
-      // Fallback spawn logic (as in restartGame)
        console.warn("No rooms found for initial spawn, placing player at default [1.5, 0, 1.5]");
        playerPos = [1.5, 0.0, 1.5];
         let foundSpawn = false;
@@ -1122,18 +1141,17 @@ function init() {
   geometry = buildMazeGeometry(mazeData.maze);
   initBuffers();
 
-  // Initialize discovered array based on maze size
   discovered = [];
   for (let i = 0; i < mazeData.maze.length; i++) {
     discovered[i] = [];
     for (let j = 0; j < mazeData.maze[i].length; j++) {
-      discovered[i][j] = false; // Start all undiscovered
+      discovered[i][j] = false;
     }
   }
-   updateDiscovered(); // Discover initial area around the player
+   updateDiscovered();
 
 
-  gl.clearColor(0.2, 0.2, 0.3, 1.0); // Dark blue-grey background
+  gl.clearColor(0.2, 0.2, 0.3, 1.0);
   gl.enable(gl.DEPTH_TEST);
   gl.depthFunc(gl.LEQUAL);
 
@@ -1143,21 +1161,21 @@ function init() {
       alert("Error: Could not find mazeCanvas element!");
       return;
   }
+  // NEW: Add click listener for UI buttons
+  overlay.addEventListener("click", onCanvasClick, false);
   overlay.addEventListener("mousedown", onMouseDown, false);
   overlay.addEventListener("mousemove", onMouseMove, false);
   overlay.addEventListener("mouseup", onMouseUp, false);
   overlay.addEventListener("mouseleave", onMouseUp, false);
 
-  // === Auto-Start & Frame Time Initialization ===
   lastManualInputTime = performance.now();
-  lastFrameTime = performance.now(); // Initialize frame timer
+  lastFrameTime = performance.now();
   autoStarted = false;
 
   requestAnimationFrame(render); // Start the main loop
 }
 
 function initBuffers() {
-  // Clean up old buffers if they exist (important for restart)
   if (buffers.floor) gl.deleteBuffer(buffers.floor.buffer);
   if (buffers.ceiling) gl.deleteBuffer(buffers.ceiling.buffer);
   if (buffers.wallBrick) gl.deleteBuffer(buffers.wallBrick.buffer);
@@ -1188,11 +1206,11 @@ function initBuffer(dataArray) {
 
 // ============================ Render Loop (MODIFIED) ============================
 function render(now) {
-  const deltaTime = (now - lastFrameTime) / 1000.0; // Time since last frame in seconds
+  const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
 
-  // --- Update Animation States (Bot Movement and Player Turning) ---
-  if (animatingTranslation) { // This is now ONLY used by the bot
+  // --- Update Animation States (Bot Movement, Player Turning, and Block Movement) ---
+  if (animatingTranslation) {
     let t = (performance.now() - translationStart) / translationDuration;
     t = Math.min(t, 1.0);
     let easedT = 1 - Math.pow(1 - t, 3);
@@ -1204,7 +1222,7 @@ function render(now) {
        updateDiscovered();
     }
   }
-  if (animatingRotation) { // Used by bot and player
+  if (animatingRotation) {
     let t = (performance.now() - rotationStart) / rotationDuration;
     t = Math.min(t, 1.0);
     let easedT = 1 - Math.pow(1 - t, 3);
@@ -1217,33 +1235,37 @@ function render(now) {
     }
   }
 
-  // -------- Handle Continuous Manual Movement (REVISED) -----------
+  // -------- Handle Manual Player Movement (MODIFIED) -----------
   if (!botMode) {
-      const manualMoveSpeed = 4.5; // Units per second. Increased for faster movement.
-      let moveX = 0;
-      let moveZ = 0;
+      // MODIFIED: Continuous forward/backward movement ONLY happens in 'smooth' mode.
+      if (movementStyle === 'smooth') {
+          const manualMoveSpeed = 4.5;
+          let moveX = 0;
+          let moveZ = 0;
 
-      const rad = toRadian(playerAngle);
-      if (keysDown["w"] || keysDown["arrowup"]) {
-          moveX += Math.sin(rad) * manualMoveSpeed * deltaTime;
-          moveZ += Math.cos(rad) * manualMoveSpeed * deltaTime;
-      }
-      if (keysDown["s"] || keysDown["arrowdown"]) {
-          moveX -= Math.sin(rad) * manualMoveSpeed * deltaTime;
-          moveZ -= Math.cos(rad) * manualMoveSpeed * deltaTime;
-      }
+          const rad = toRadian(playerAngle);
+          if (keysDown["w"] || keysDown["arrowup"]) {
+              moveX += Math.sin(rad) * manualMoveSpeed * deltaTime;
+              moveZ += Math.cos(rad) * manualMoveSpeed * deltaTime;
+          }
+          if (keysDown["s"] || keysDown["arrowdown"]) {
+              moveX -= Math.sin(rad) * manualMoveSpeed * deltaTime;
+              moveZ -= Math.cos(rad) * manualMoveSpeed * deltaTime;
+          }
 
-      if (moveX !== 0 || moveZ !== 0) {
-          const targetX = playerPos[0] + moveX;
-          const targetZ = playerPos[2] + moveZ;
-          if (canMove(targetX, targetZ)) {
-              playerPos[0] = targetX;
-              playerPos[2] = targetZ;
-              updateDiscovered(); // Update visibility while moving
+          if (moveX !== 0 || moveZ !== 0) {
+              const targetX = playerPos[0] + moveX;
+              const targetZ = playerPos[2] + moveZ;
+              if (canMove(targetX, targetZ)) {
+                  playerPos[0] = targetX;
+                  playerPos[2] = targetZ;
+                  updateDiscovered();
+              }
           }
       }
 
-      // Handle turning initiation (uses the animation system for smoothness)
+      // MODIFIED: Turning is handled for BOTH movement styles here.
+      // It's triggered by holding the key, but the animation prevents it from spinning too fast.
       if (!animatingRotation) {
           if (keysDown["a"] || keysDown["arrowleft"]) {
               handleTurnLeft();
@@ -1389,13 +1411,11 @@ function render(now) {
   gl.drawArrays(gl.TRIANGLES, 0, bufferObj.vertexCount);
 }
 
-// ============================ 2D Overlay Functions ============================
+// ============================ 2D Overlay Functions (MODIFIED) ============================
 function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMapOffsetY, windowWidth, windowHeight) {
   const cellSize = 10;
   const cols = maze[0].length;
   const rows = maze.length;
-  const mapWidth = cols * cellSize;
-  const mapHeight = rows * cellSize;
 
   ctx.save();
   ctx.beginPath();
@@ -1586,52 +1606,70 @@ function updateOverlay() {
     drawMinimap(ctx, mazeData.maze, discovered, playerCoord, overlay.width, overlay.height);
   }
 
+  // NEW: Draw the help menu if it's visible
   if (helpVisible) {
-    ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
-    const boxWidth = 320;
-    const boxHeight = 290;
-    const boxX = 10;
-    const boxY = 10;
+    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+    const boxWidth = 350;
+    const boxHeight = 400; // Increased height for the new button
+    const boxX = 20;
+    const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+    
     ctx.fillStyle = "white";
-    ctx.font = "14px monospace";
-    const lineHeight = 18;
+    ctx.font = "15px monospace";
+    const lineHeight = 20;
     let textX = boxX + 15;
-    let textY = boxY + 30;
+    let textY = boxY + 35;
+    
     const instructions = [
-      "=== MAZE EXPLORER ===",
-      "Controls:",
-      " W/Up   : Move forward",
-      " S/Down : Move backward",
-      " A/Left : Turn left",
-      " D/Right: Turn right",
+      "======= MAZE EXPLORER =======",
+      "CONTROLS:",
+      " W/Up Arrow   : Move Forward",
+      " S/Down Arrow : Move Backward",
+      " A/Left Arrow : Turn Left",
+      " D/Right Arrow: Turn Right",
+      " M            : Toggle Full Map",
+      "                (Drag to Pan)",
+      " H            : Toggle Help (This)",
       "",
-      " M : Toggle Full Map",
-      "     (Drag to Pan Map)",
-      " H : Toggle Help (This Box)",
-      "",
-      "Bot Mode:",
+      "BOT MODE:",
       " B : Toggle Bot On/Off",
-      " 1 : Set Bot to BFS",
-      " 2 : Set Bot to DFS",
-      " 3 : Set Bot to A*",
-      " 4 : Set Bot to Explore",
+      " 1 : Algorithm: BFS",
+      " 2 : Algorithm: DFS",
+      " 3 : Algorithm: A*",
+      " 4 : Algorithm: Explore",
       "",
-      "Bot auto-starts if idle.",
-      "Find the Red Exit!"
+      "GOAL: Find the Red Exit!",
     ];
+
+    ctx.textAlign = "left";
     for (let i = 0; i < instructions.length; i++) {
       ctx.fillText(instructions[i], textX, textY + i * lineHeight);
     }
+
+    // NEW: Draw the movement style toggle button inside the help menu
+    const buttonY = textY + instructions.length * lineHeight + 5;
+    moveToggleButtonRect = { x: textX, y: buttonY, width: boxWidth - 30, height: 30 };
+    
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(moveToggleButtonRect.x, moveToggleButtonRect.y, moveToggleButtonRect.width, moveToggleButtonRect.height);
+    
+    ctx.textAlign = 'center';
+    const buttonText = `Style: ${movementStyle.charAt(0).toUpperCase() + movementStyle.slice(1)} (Click to Toggle)`;
+    ctx.fillText(buttonText, moveToggleButtonRect.x + moveToggleButtonRect.width / 2, moveToggleButtonRect.y + 20);
+
   } else {
+     // Draw a small hint to open the help menu
      if(!isDragging) {
         ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
         ctx.font = "16px monospace";
         ctx.textAlign = "left";
-        ctx.fillText("H for Help", 10, overlay.height - 20);
+        ctx.fillText("H for Help", 20, overlay.height - 20);
      }
   }
 
+  // --- Draw Auto-Bot/Bot Status Text ---
   const now = performance.now();
   ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
   ctx.font = "bold 20px monospace";
@@ -1659,8 +1697,7 @@ function updateOverlay() {
        let statusText = `Bot Active (${selectedAlgorithm.toUpperCase()}). Press B to toggle.`;
        ctx.fillText(statusText, centerX, centerY);
    }
-
-   ctx.textAlign = "left";
+   ctx.textAlign = "left"; // Reset alignment for other potential draws
 }
 
 // ============================ Window Load & Resize ============================
