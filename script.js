@@ -442,9 +442,11 @@ const mazeWidth = 100, mazeHeight = 100, maxRooms = 40, roomMinSize = 5, roomMax
 let fullMapVisible = false;
 let lastFrameTime = 0; // For delta time calculation
 
-// State for help menu and movement style
+// State for help menu and movement styles
 let helpVisible = false;
-let movementStyle = 'smooth'; // 'smooth' or 'block'
+// NEW: Separated player and bot movement styles
+let manualMoveStyle = 'free';   // Player style: 'free' or 'step'
+let botMoveStyle = 'smooth';      // Bot visual style: 'smooth' or 'block'
 
 // Animation variables for smooth movement.
 let animatingTranslation = false;
@@ -899,7 +901,7 @@ function handleTurnRight() {
 }
 
 
-// ============================ Keyboard Controls ============================
+// ============================ Keyboard Controls (MODIFIED) ============================
 function onKeyDown(e) {
   let isManualAction = false;
   let key = e.key.toLowerCase();
@@ -940,18 +942,22 @@ function onKeyDown(e) {
       case "h":
           helpVisible = !helpVisible;
           return;
+      // MODIFIED: 'N' now controls the BOT'S visual style
       case "n":
-          movementStyle = (movementStyle === 'smooth') ? 'block' : 'smooth';
-          console.log("Movement style set to:", movementStyle);
-          // This toggle is a general setting, so it doesn't count as a direct "manual action"
-          // that should reset the auto-bot timer.
+          botMoveStyle = (botMoveStyle === 'smooth') ? 'block' : 'smooth';
+          console.log("Bot movement style set to:", botMoveStyle);
+          return;
+      // NEW: 'V' controls the PLAYER'S movement style
+      case "v":
+          manualMoveStyle = (manualMoveStyle === 'free') ? 'step' : 'free';
+          console.log("Manual movement style set to:", manualMoveStyle);
           return;
   }
 
   // 2) Handle Manual Player Movement
-  if (!botMode && movementStyle === 'block') {
+  // MODIFIED: This logic now depends on manualMoveStyle being 'step'
+  if (!botMode && manualMoveStyle === 'step') {
       if (['w', 's', 'arrowup', 'arrowdown'].includes(key)) {
-          // If already animating a move or turn, ignore new movement commands
           if (animatingTranslation || animatingRotation) return;
           
           const moveDir = (key === 'w' || key === 'arrowup') ? 1 : -1;
@@ -963,18 +969,15 @@ function onKeyDown(e) {
           let targetGridX = Math.round(playerPos[0] - 0.5);
           let targetGridZ = Math.round(playerPos[2] - 0.5);
 
-          // Determine dominant axis for grid-based movement
           if (Math.abs(dx) > Math.abs(dz)) {
               targetGridX += Math.sign(dx);
           } else {
               targetGridZ += Math.sign(dz);
           }
           
-          // Collision check against the target grid cell
           if (targetGridZ >= 0 && targetGridZ < mazeHeight && targetGridX >= 0 && targetGridX < mazeWidth) {
               const cell = mazeData.maze[targetGridZ].charAt(targetGridX);
               if (cell !== '#' && cell !== 'B') {
-                  // Valid move, set up animation to the center of the target block
                   animatingTranslation = true;
                   translationStart = performance.now();
                   startPos = [...playerPos];
@@ -1169,7 +1172,7 @@ function initBuffer(dataArray) {
   };
 }
 
-// ============================ Render Loop (MODIFIED) ============================
+// ============================ Render Loop ============================
 function render(now) {
   const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
@@ -1201,8 +1204,10 @@ function render(now) {
   }
 
   // -------- Handle Manual Player Movement -----------
+  // MODIFIED: Logic now branches based on the new 'manualMoveStyle' variable
   if (!botMode) {
-      if (movementStyle === 'smooth') {
+      // Free-roam style (hold to move)
+      if (manualMoveStyle === 'free') {
           const manualMoveSpeed = 4.5;
           let moveX = 0;
           let moveZ = 0;
@@ -1227,7 +1232,9 @@ function render(now) {
               }
           }
       }
-
+      // Step-by-step style is handled entirely in onKeyDown.
+      
+      // Turning is handled for BOTH manual styles here.
       if (!animatingRotation) {
           if (keysDown["a"] || keysDown["arrowleft"]) {
               handleTurnLeft();
@@ -1274,17 +1281,15 @@ function render(now) {
                 targetAngle = desiredAngle;
             } else {
                 if (canMove(targetX, targetZ)) {
-                    // NEW: Check movement style to determine if bot animates or teleports.
-                    if (movementStyle === 'smooth') {
-                        // Animate the bot's movement to the next cell.
+                    // MODIFIED: Check bot's visual style to determine if it animates or teleports.
+                    if (botMoveStyle === 'smooth') {
                         animatingTranslation = true;
                         translationStart = performance.now();
                         startPos = [...playerPos];
                         targetPos = [targetX, playerPos[1], targetZ];
-                    } else { // 'block' style
-                        // Instantly move the bot to the next cell.
+                    } else { // 'block' style for bot is instant
                         playerPos = [targetX, playerPos[1], targetZ];
-                        updateDiscovered(); // Update map immediately since move was instant.
+                        updateDiscovered();
                     }
                 } else {
                     console.warn("Bot collision detected. Recomputing.");
@@ -1305,17 +1310,8 @@ function render(now) {
 
 
   // --- WebGL Drawing ---
-  if (!gl) {
-      console.error("Render loop: WebGL context lost or not initialized.");
-      return;
-  }
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-  if (!shaderProgram) {
-      console.error("Render loop: Shader program not available.");
-      return;
-  }
   gl.useProgram(shaderProgram);
 
   const fieldOfView = toRadian(75);
@@ -1361,67 +1357,46 @@ function render(now) {
   if (!gl || !bufferObj || !bufferObj.buffer || bufferObj.vertexCount === 0 || !texture) {
     return;
   }
-  if (attribLocations.aPosition < 0 || attribLocations.aTexCoord < 0 || !uniformLocations.uModel || !uniformLocations.uTexture) {
-      console.error("Skipping drawObject: Invalid shader locations.");
-      return;
-  }
-
   gl.bindBuffer(gl.ARRAY_BUFFER, bufferObj.buffer);
   gl.vertexAttribPointer(attribLocations.aPosition, 3, gl.FLOAT, false, 5 * 4, 0);
   gl.enableVertexAttribArray(attribLocations.aPosition);
   gl.vertexAttribPointer(attribLocations.aTexCoord, 2, gl.FLOAT, false, 5 * 4, 3 * 4);
   gl.enableVertexAttribArray(attribLocations.aTexCoord);
-
   gl.uniformMatrix4fv(uniformLocations.uModel, false, modelMatrix);
-
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.uniform1i(uniformLocations.uTexture, 0);
-
   gl.drawArrays(gl.TRIANGLES, 0, bufferObj.vertexCount);
 }
 
 // ============================ 2D Overlay Functions ============================
 function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMapOffsetY, windowWidth, windowHeight) {
   const cellSize = 10;
-  const cols = maze[0].length;
-  const rows = maze.length;
-
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, windowWidth, windowHeight);
   ctx.clip();
-
-  for (let i = 0; i < rows; i++) {
-    for (let j = 0; j < cols; j++) {
+  for (let i = 0; i < maze.length; i++) {
+    for (let j = 0; j < maze[0].length; j++) {
       let x = fullMapOffsetX + j * cellSize;
       let y = fullMapOffsetY + i * cellSize;
-
-      if (x + cellSize < 0 || x > windowWidth || y + cellSize < 0 || y > windowHeight) {
-          continue;
+      if (x + cellSize < 0 || x > windowWidth || y + cellSize < 0 || y > windowHeight) continue;
+      if (discovered && discovered[i] && discovered[i][j]) {
+        const cell = maze[i].charAt(j);
+        if (cell === "#") ctx.fillStyle = "rgb(80, 80, 80)";
+        else if (cell === "E") ctx.fillStyle = "rgb(255, 60, 60)";
+        else if (cell === "B") ctx.fillStyle = "rgb(40, 40, 40)";
+        else ctx.fillStyle = "rgb(200, 200, 200)";
+      } else {
+        ctx.fillStyle = "rgb(20, 20, 20)";
       }
-      if (discovered && discovered[i] && discovered[i][j] !== undefined) {
-            if (discovered[i][j]) {
-                const cell = maze[i].charAt(j);
-                if (cell === "#") ctx.fillStyle = "rgb(80, 80, 80)";
-                else if (cell === "E") ctx.fillStyle = "rgb(255, 60, 60)";
-                else if (cell === "B") ctx.fillStyle = "rgb(40, 40, 40)";
-                else ctx.fillStyle = "rgb(200, 200, 200)";
-            } else {
-                ctx.fillStyle = "rgb(20, 20, 20)";
-            }
-       } else {
-            ctx.fillStyle = "rgb(10, 10, 10)";
-       }
       ctx.fillRect(x, y, cellSize, cellSize);
     }
   }
-
   const playerMapX = fullMapOffsetX + playerPos[0] * cellSize;
   const playerMapY = fullMapOffsetY + playerPos[2] * cellSize;
   const playerSize = cellSize * 0.8;
   const angleRad = toRadian(playerAngle);
-
   ctx.save();
   ctx.translate(playerMapX, playerMapY);
   ctx.rotate(-angleRad);
@@ -1433,7 +1408,6 @@ function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMap
   ctx.closePath();
   ctx.fill();
   ctx.restore();
-
    if (botMode && botPath && botPath.length > 0) {
        ctx.strokeStyle = "rgba(0, 255, 255, 0.7)";
        ctx.lineWidth = Math.max(1, cellSize / 4);
@@ -1445,7 +1419,6 @@ function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMap
        }
        ctx.stroke();
    }
-
   ctx.restore();
 }
 
@@ -1457,38 +1430,30 @@ function drawMinimap(ctx, maze, discovered, playerCoord, windowWidth, windowHeig
   const mapHeightPixels = regionSize * cellSize;
   const startX = windowWidth - mapWidthPixels - margin;
   const startY = margin;
-
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.fillRect(startX - 3, startY - 3, mapWidthPixels + 6, mapHeightPixels + 6);
-   ctx.strokeStyle = "rgba(150, 150, 150, 0.8)";
-   ctx.lineWidth = 1;
-   ctx.strokeRect(startX - 3, startY - 3, mapWidthPixels + 6, mapHeightPixels + 6);
-
+  ctx.strokeStyle = "rgba(150, 150, 150, 0.8)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(startX - 3, startY - 3, mapWidthPixels + 6, mapHeightPixels + 6);
   const playerCellX = Math.floor(playerPos[0]);
   const playerCellY = Math.floor(playerPos[2]);
   const startCellX = playerCellX - Math.floor(regionSize / 2);
   const startCellY = playerCellY - Math.floor(regionSize / 2);
-
   for (let i = 0; i < regionSize; i++) {
     for (let j = 0; j < regionSize; j++) {
       const mazeY = startCellY + i;
       const mazeX = startCellX + j;
       const drawX = startX + j * cellSize;
       const drawY = startY + i * cellSize;
-
       if (mazeY >= 0 && mazeY < maze.length && mazeX >= 0 && mazeX < maze[0].length) {
-          if (discovered && discovered[mazeY] && discovered[mazeY][mazeX] !== undefined) {
-              if (discovered[mazeY][mazeX]) {
-                  const cell = maze[mazeY].charAt(mazeX);
-                  if (cell === "#") ctx.fillStyle = "rgb(80, 80, 80)";
-                  else if (cell === "E") ctx.fillStyle = "rgb(255, 60, 60)";
-                  else if (cell === "B") ctx.fillStyle = "rgb(40, 40, 40)";
-                  else ctx.fillStyle = "rgb(200, 200, 200)";
-              } else {
-                  ctx.fillStyle = "rgb(20, 20, 20)";
-              }
+          if (discovered && discovered[mazeY] && discovered[mazeY][mazeX]) {
+              const cell = maze[mazeY].charAt(mazeX);
+              if (cell === "#") ctx.fillStyle = "rgb(80, 80, 80)";
+              else if (cell === "E") ctx.fillStyle = "rgb(255, 60, 60)";
+              else if (cell === "B") ctx.fillStyle = "rgb(40, 40, 40)";
+              else ctx.fillStyle = "rgb(200, 200, 200)";
           } else {
-              ctx.fillStyle = "rgb(10, 10, 10)";
+              ctx.fillStyle = "rgb(20, 20, 20)";
           }
       } else {
           ctx.fillStyle = "rgba(0, 0, 0, 0)";
@@ -1496,12 +1461,10 @@ function drawMinimap(ctx, maze, discovered, playerCoord, windowWidth, windowHeig
       ctx.fillRect(drawX, drawY, cellSize, cellSize);
     }
   }
-
    const playerMiniMapX = startX + (playerPos[0] - startCellX) * cellSize;
    const playerMiniMapY = startY + (playerPos[2] - startCellY) * cellSize;
    const playerSize = cellSize * 1.2;
    const angleRad = toRadian(playerAngle);
-
    ctx.save();
    ctx.translate(playerMiniMapX, playerMiniMapY);
    ctx.rotate(-angleRad);
@@ -1531,38 +1494,16 @@ function updateOverlay() {
   if (botMode && autoMapState !== 'IDLE') {
       const now = performance.now();
       const elapsed = now - autoMapTimer;
-
       switch (autoMapState) {
-          case 'INITIAL_WAIT':
-              if (elapsed >= autoMapInitialWait) {
-                  fullMapVisible = true;
-                  autoMapState = 'MAP_OPEN';
-                  autoMapTimer = now;
-              }
-              break;
-          case 'MAP_OPEN':
-              if (elapsed >= autoMapOpenDuration) {
-                  fullMapVisible = false;
-                  autoMapState = 'MAP_CLOSED_WAIT';
-                  autoMapTimer = now;
-              }
-              break;
-          case 'MAP_CLOSED_WAIT':
-              if (elapsed >= autoMapClosedWaitDuration) {
-                  fullMapVisible = true;
-                  autoMapState = 'MAP_OPEN';
-                  autoMapTimer = now;
-              }
-              break;
+          case 'INITIAL_WAIT': if (elapsed >= autoMapInitialWait) { fullMapVisible = true; autoMapState = 'MAP_OPEN'; autoMapTimer = now; } break;
+          case 'MAP_OPEN': if (elapsed >= autoMapOpenDuration) { fullMapVisible = false; autoMapState = 'MAP_CLOSED_WAIT'; autoMapTimer = now; } break;
+          case 'MAP_CLOSED_WAIT': if (elapsed >= autoMapClosedWaitDuration) { fullMapVisible = true; autoMapState = 'MAP_OPEN'; autoMapTimer = now; } break;
       }
   }
 
-  if (!mazeData || !mazeData.maze || !discovered) {
-      return;
-  }
+  if (!mazeData || !mazeData.maze || !discovered) return;
 
   const playerCoord = { x: playerPos[0], y: playerPos[2] };
-
   if (fullMapVisible) {
     const mapCellSize = 10;
     let viewCenterX = overlay.width / 2;
@@ -1576,11 +1517,11 @@ function updateOverlay() {
     drawMinimap(ctx, mazeData.maze, discovered, playerCoord, overlay.width, overlay.height);
   }
 
-  // MODIFIED: Draw the help menu with updated text
+  // MODIFIED: Draw the help menu with separated controls
   if (helpVisible) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    const boxWidth = 380; // Make box a bit wider for new text
-    const boxHeight = 360;
+    const boxWidth = 400;
+    const boxHeight = 420;
     const boxX = 20;
     const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
@@ -1592,27 +1533,32 @@ function updateOverlay() {
     let textX = boxX + 15;
     let textY = boxY + 35;
     
+    // Capitalize first letter for display
+    const manualStyleStr = manualMoveStyle.charAt(0).toUpperCase() + manualMoveStyle.slice(1);
+    const botStyleStr = botMoveStyle.charAt(0).toUpperCase() + botMoveStyle.slice(1);
+
     const instructions = [
-      "========= MAZE EXPLORER =========",
-      "CONTROLS:",
+      "========== MAZE EXPLORER ==========",
+      "PLAYER CONTROLS:",
       " W/Up Arrow   : Move Forward",
       " S/Down Arrow : Move Backward",
       " A/Left Arrow : Turn Left",
       " D/Right Arrow: Turn Right",
-      " M            : Toggle Full Map",
-      "                (Drag to Pan)",
-      " H            : Toggle Help (This)",
-      // MODIFIED: Clarified that N affects both player and bot
-      " N            : Toggle Player/Bot Move Style",
+      " V            : Toggle Player Move Style",
+      `   (Current: ${manualStyleStr})`,
       "",
-      "Current Style: " + (movementStyle.charAt(0).toUpperCase() + movementStyle.slice(1)),
-      "",
-      "BOT MODE:",
+      "BOT CONTROLS:",
       " B : Toggle Bot On/Off",
       " 1 : Algorithm: BFS",
       " 2 : Algorithm: DFS",
       " 3 : Algorithm: A*",
       " 4 : Algorithm: Explore",
+      " N : Toggle Bot Visual Style",
+      `   (Current: ${botStyleStr})`,
+      "",
+      "GENERAL:",
+      " M : Toggle Full Map (Drag to Pan)",
+      " H : Toggle Help (This Menu)",
       "",
       "GOAL: Find the Red Exit!",
     ];
