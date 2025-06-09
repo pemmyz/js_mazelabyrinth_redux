@@ -445,12 +445,10 @@ let lastFrameTime = 0; // For delta time calculation
 // NEW: State for help menu and movement style
 let helpVisible = false;
 let movementStyle = 'smooth'; // 'smooth' or 'block'
-let moveToggleButtonRect = {}; // Stores the position of the movement toggle button for click detection
 
 // Animation variables for smooth movement.
 let animatingTranslation = false;
 let translationStart = 0;
-// MODIFIED: Make translation duration slightly faster for a "snappier" block move feel.
 const translationDuration = 150; // milliseconds for movement step (bot or player block move)
 let startPos = [0, 0, 0];
 let targetPos = [0, 0, 0];
@@ -881,27 +879,6 @@ function onMouseUp(e) {
   }
 }
 
-// NEW: Click handler for UI elements on the canvas (like the movement toggle button)
-function onCanvasClick(e) {
-    if (!helpVisible) return; // Buttons are only active when help menu is visible
-
-    const rect = document.getElementById("mazeCanvas").getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
-
-    // Check if click is inside the movement toggle button
-    if (clickX >= moveToggleButtonRect.x && clickX <= moveToggleButtonRect.x + moveToggleButtonRect.width &&
-        clickY >= moveToggleButtonRect.y && clickY <= moveToggleButtonRect.y + moveToggleButtonRect.height) {
-        
-        movementStyle = (movementStyle === 'smooth') ? 'block' : 'smooth';
-        console.log("Movement style set to:", movementStyle);
-
-        // Redraw overlay to show new button state immediately
-        updateOverlay(); 
-    }
-}
-
-
 // ============================ Movement Helper Functions ============================
 const turnSpeed = 90; // Degrees per turn key press
 
@@ -960,15 +937,18 @@ function onKeyDown(e) {
               dragOffsetY = 0;
           }
           return;
-      // NEW: Help menu toggle
       case "h":
           helpVisible = !helpVisible;
           return;
+      // NEW: Key to toggle movement style
+      case "n":
+          movementStyle = (movementStyle === 'smooth') ? 'block' : 'smooth';
+          console.log("Movement style set to:", movementStyle);
+          // Toggling movement style doesn't reset the auto-start timer
+          return; // Return here to avoid falling through
   }
 
   // 2) Handle Manual Player Movement
-  // MODIFIED: This section now handles block-based movement directly.
-  // Smooth movement is handled in the render loop.
   if (!botMode && movementStyle === 'block') {
       if (['w', 's', 'arrowup', 'arrowdown'].includes(key)) {
           // If already animating a move or turn, ignore new movement commands
@@ -1161,8 +1141,7 @@ function init() {
       alert("Error: Could not find mazeCanvas element!");
       return;
   }
-  // NEW: Add click listener for UI buttons
-  overlay.addEventListener("click", onCanvasClick, false);
+  // MODIFIED: Removed the click listener as it's no longer needed
   overlay.addEventListener("mousedown", onMouseDown, false);
   overlay.addEventListener("mousemove", onMouseMove, false);
   overlay.addEventListener("mouseup", onMouseUp, false);
@@ -1204,7 +1183,7 @@ function initBuffer(dataArray) {
   };
 }
 
-// ============================ Render Loop (MODIFIED) ============================
+// ============================ Render Loop ============================
 function render(now) {
   const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
@@ -1235,9 +1214,9 @@ function render(now) {
     }
   }
 
-  // -------- Handle Manual Player Movement (MODIFIED) -----------
+  // -------- Handle Manual Player Movement -----------
   if (!botMode) {
-      // MODIFIED: Continuous forward/backward movement ONLY happens in 'smooth' mode.
+      // Continuous forward/backward movement ONLY happens in 'smooth' mode.
       if (movementStyle === 'smooth') {
           const manualMoveSpeed = 4.5;
           let moveX = 0;
@@ -1264,8 +1243,7 @@ function render(now) {
           }
       }
 
-      // MODIFIED: Turning is handled for BOTH movement styles here.
-      // It's triggered by holding the key, but the animation prevents it from spinning too fast.
+      // Turning is handled for BOTH movement styles here.
       if (!animatingRotation) {
           if (keysDown["a"] || keysDown["arrowleft"]) {
               handleTurnLeft();
@@ -1606,17 +1584,18 @@ function updateOverlay() {
     drawMinimap(ctx, mazeData.maze, discovered, playerCoord, overlay.width, overlay.height);
   }
 
-  // NEW: Draw the help menu if it's visible
+  // MODIFIED: Draw the help menu with the new keybinding
   if (helpVisible) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
     const boxWidth = 350;
-    const boxHeight = 400; // Increased height for the new button
+    const boxHeight = 360; // Adjusted height
     const boxX = 20;
     const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
     
     ctx.fillStyle = "white";
     ctx.font = "15px monospace";
+    ctx.textAlign = "left";
     const lineHeight = 20;
     let textX = boxX + 15;
     let textY = boxY + 35;
@@ -1631,6 +1610,10 @@ function updateOverlay() {
       " M            : Toggle Full Map",
       "                (Drag to Pan)",
       " H            : Toggle Help (This)",
+      " N            : Toggle Movement Style", // NEW
+      "",
+      // NEW: Show current movement style
+      "Current Style: " + (movementStyle.charAt(0).toUpperCase() + movementStyle.slice(1)),
       "",
       "BOT MODE:",
       " B : Toggle Bot On/Off",
@@ -1642,22 +1625,14 @@ function updateOverlay() {
       "GOAL: Find the Red Exit!",
     ];
 
-    ctx.textAlign = "left";
     for (let i = 0; i < instructions.length; i++) {
-      ctx.fillText(instructions[i], textX, textY + i * lineHeight);
+      // Indent sub-items for clarity
+      if (instructions[i].trim().startsWith("(")) {
+        ctx.fillText(instructions[i], textX + 15, textY + i * lineHeight);
+      } else {
+        ctx.fillText(instructions[i], textX, textY + i * lineHeight);
+      }
     }
-
-    // NEW: Draw the movement style toggle button inside the help menu
-    const buttonY = textY + instructions.length * lineHeight + 5;
-    moveToggleButtonRect = { x: textX, y: buttonY, width: boxWidth - 30, height: 30 };
-    
-    ctx.strokeStyle = 'white';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(moveToggleButtonRect.x, moveToggleButtonRect.y, moveToggleButtonRect.width, moveToggleButtonRect.height);
-    
-    ctx.textAlign = 'center';
-    const buttonText = `Style: ${movementStyle.charAt(0).toUpperCase() + movementStyle.slice(1)} (Click to Toggle)`;
-    ctx.fillText(buttonText, moveToggleButtonRect.x + moveToggleButtonRect.width / 2, moveToggleButtonRect.y + 20);
 
   } else {
      // Draw a small hint to open the help menu
