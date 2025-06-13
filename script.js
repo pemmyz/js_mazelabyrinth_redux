@@ -368,14 +368,10 @@ function buildMazeGeometry(maze) {
           );
       }
 
-
-      if (cell === '#' || cell === 'B' || cell === 'E') {
-        let isExit = (cell === 'E');
-        let targetVerts = isExit ? wallExitVerts : wallBrickVerts;
-
+      if (cell === '#' || cell === 'B') {
         // North wall (-Z direction face) - draw if cell north is open space
         if (z > 0 && maze[z-1][x] !== '#' && maze[z-1][x] !== 'B') {
-          targetVerts.push(
+          wallBrickVerts.push(
             x+1, 1.0, z,     1.0, 1.0, // Top Right
             x+1, 0.0, z,     1.0, 0.0, // Bottom Right
             x,   0.0, z,     0.0, 0.0, // Bottom Left
@@ -386,7 +382,7 @@ function buildMazeGeometry(maze) {
         }
         // South wall (+Z direction face) - draw if cell south is open space
         if (z < rows-1 && maze[z+1][x] !== '#' && maze[z+1][x] !== 'B') {
-          targetVerts.push(
+          wallBrickVerts.push(
             x,   1.0, z+1,   0.0, 1.0, // Top Left
             x,   0.0, z+1,   0.0, 0.0, // Bottom Left
             x+1, 0.0, z+1,   1.0, 0.0, // Bottom Right
@@ -397,7 +393,7 @@ function buildMazeGeometry(maze) {
         }
         // West wall (-X direction face) - draw if cell west is open space
         if (x > 0 && maze[z][x-1] !== '#' && maze[z][x-1] !== 'B') {
-           targetVerts.push(
+           wallBrickVerts.push(
             x, 1.0, z,       0.0, 1.0, // Top Left (back)
             x, 0.0, z,       0.0, 0.0, // Bottom Left (back)
             x, 0.0, z+1,     1.0, 0.0, // Bottom Left (front)
@@ -408,13 +404,58 @@ function buildMazeGeometry(maze) {
         }
         // East wall (+X direction face) - draw if cell east is open space
         if (x < cols-1 && maze[z][x+1] !== '#' && maze[z][x+1] !== 'B') {
-          targetVerts.push(
+          wallBrickVerts.push(
             x+1, 1.0, z+1,   1.0, 1.0, // Top Right (front)
             x+1, 0.0, z+1,   1.0, 0.0, // Bottom Right (front)
             x+1, 0.0, z,     0.0, 0.0, // Bottom Right (back)
             x+1, 1.0, z,     0.0, 1.0, // Top Right (back)
             x+1, 1.0, z+1,   1.0, 1.0, // Top Right (front)
             x+1, 0.0, z,     0.0, 0.0  // Bottom Right (back)
+          );
+        }
+      } else if (cell === 'E') { // MODIFIED: Handle Exit walls separately with flipped V-coordinates
+        // North wall (-Z direction face) - draw if cell north is open space
+        if (z > 0 && maze[z-1][x] !== '#' && maze[z-1][x] !== 'B') {
+          wallExitVerts.push(
+            x+1, 1.0, z,     1.0, 0.0, // Top Right
+            x+1, 0.0, z,     1.0, 1.0, // Bottom Right
+            x,   0.0, z,     0.0, 1.0, // Bottom Left
+            x,   1.0, z,     0.0, 0.0, // Top Left
+            x+1, 1.0, z,     1.0, 0.0, // Top Right
+            x,   0.0, z,     0.0, 1.0  // Bottom Left
+          );
+        }
+        // South wall (+Z direction face) - draw if cell south is open space
+        if (z < rows-1 && maze[z+1][x] !== '#' && maze[z+1][x] !== 'B') {
+          wallExitVerts.push(
+            x,   1.0, z+1,   0.0, 0.0, // Top Left
+            x,   0.0, z+1,   0.0, 1.0, // Bottom Left
+            x+1, 0.0, z+1,   1.0, 1.0, // Bottom Right
+            x+1, 1.0, z+1,   1.0, 0.0, // Top Right
+            x,   1.0, z+1,   0.0, 0.0, // Top Left
+            x+1, 0.0, z+1,   1.0, 1.0  // Bottom Right
+          );
+        }
+        // West wall (-X direction face) - draw if cell west is open space
+        if (x > 0 && maze[z][x-1] !== '#' && maze[z][x-1] !== 'B') {
+           wallExitVerts.push(
+            x, 1.0, z,       0.0, 0.0, // Top Left (back)
+            x, 0.0, z,       0.0, 1.0, // Bottom Left (back)
+            x, 0.0, z+1,     1.0, 1.0, // Bottom Left (front)
+            x, 1.0, z+1,     1.0, 0.0, // Top Left (front)
+            x, 1.0, z,       0.0, 0.0, // Top Left (back)
+            x, 0.0, z+1,     1.0, 1.0  // Bottom Left (front)
+          );
+        }
+        // East wall (+X direction face) - draw if cell east is open space
+        if (x < cols-1 && maze[z][x+1] !== '#' && maze[z][x+1] !== 'B') {
+          wallExitVerts.push(
+            x+1, 1.0, z+1,   1.0, 0.0, // Top Right (front)
+            x+1, 0.0, z+1,   1.0, 1.0, // Bottom Right (front)
+            x+1, 0.0, z,     0.0, 1.0, // Bottom Right (back)
+            x+1, 1.0, z,     0.0, 0.0, // Top Right (back)
+            x+1, 1.0, z+1,   1.0, 0.0, // Top Right (front)
+            x+1, 0.0, z,     0.0, 1.0  // Bottom Right (back)
           );
         }
       }
@@ -441,12 +482,13 @@ let playerAngle = 0; // Facing positive Z
 const mazeWidth = 100, mazeHeight = 100, maxRooms = 40, roomMinSize = 5, roomMaxSize = 9; // Adjusted maze params
 let fullMapVisible = false;
 let lastFrameTime = 0; // For delta time calculation
+let isPaused = false; // NEW: For pausing the game
 
 // State for help menu and movement styles
 let helpVisible = false;
-// NEW: Separated player and bot movement styles
+// Player and bot movement styles
 let manualMoveStyle = 'free';   // Player style: 'free' or 'step'
-let botMoveStyle = 'smooth';      // Bot visual style: 'smooth' or 'block'
+let botMoveStyle = 'smooth';      // Bot visual style is now always 'smooth'
 
 // Animation variables for smooth movement.
 let animatingTranslation = false;
@@ -849,6 +891,7 @@ function restartGame() {
   autoMapState = 'IDLE';
   autoMapTimer = 0;
   fullMapVisible = false; // Ensure map is closed on restart
+  isPaused = false; // Ensure game is not paused on restart
 
   // Discover the starting cell
    updateDiscovered();
@@ -857,7 +900,7 @@ function restartGame() {
 // ============================ Mouse Event Handlers for Dragging ============================
 function onMouseDown(e) {
   // Only allow dragging if the full map is visible
-  if (fullMapVisible) {
+  if (fullMapVisible && !isPaused) {
      isDragging = true;
      dragStartX = e.clientX;
      dragStartY = e.clientY;
@@ -867,7 +910,7 @@ function onMouseDown(e) {
   }
 }
 function onMouseMove(e) {
-  if (!isDragging || !fullMapVisible) return;
+  if (!isDragging || !fullMapVisible || isPaused) return;
   let dx = e.clientX - dragStartX;
   let dy = e.clientY - dragStartY;
   dragOffsetX += dx;
@@ -906,6 +949,20 @@ function onKeyDown(e) {
   let isManualAction = false;
   let key = e.key.toLowerCase();
 
+  // NEW: Handle Pause Key First
+  if (key === "p") {
+      isPaused = !isPaused;
+      if (!isPaused) {
+          // Prevent large deltaTime jump after unpausing
+          lastFrameTime = performance.now();
+      }
+      updateOverlay(); // Redraw overlay to show/hide pause message
+      return;
+  }
+
+  // If paused, ignore all other input
+  if (isPaused) return;
+
   // 1) Handle Toggles & Bot Keys
   switch (key) {
       case "b":
@@ -942,11 +999,7 @@ function onKeyDown(e) {
       case "h":
           helpVisible = !helpVisible;
           return;
-      // MODIFIED: 'N' now controls the BOT'S visual style
-      case "n":
-          botMoveStyle = (botMoveStyle === 'smooth') ? 'block' : 'smooth';
-          console.log("Bot movement style set to:", botMoveStyle);
-          return;
+      // 'N' key removed to make bot style permanent
       // NEW: 'V' controls the PLAYER'S movement style
       case "v":
           manualMoveStyle = (manualMoveStyle === 'free') ? 'step' : 'free';
@@ -1174,6 +1227,12 @@ function initBuffer(dataArray) {
 
 // ============================ Render Loop ============================
 function render(now) {
+  // NEW: Handle pause state.
+  if (isPaused) {
+      requestAnimationFrame(render); // Keep loop alive but skip updates.
+      return;
+  }
+
   const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
 
@@ -1204,7 +1263,7 @@ function render(now) {
   }
 
   // -------- Handle Manual Player Movement -----------
-  // MODIFIED: Logic now branches based on the new 'manualMoveStyle' variable
+  // MODIFIED: Logic now branches based on the 'manualMoveStyle' variable
   if (!botMode) {
       // Free-roam style (hold to move)
       if (manualMoveStyle === 'free') {
@@ -1245,7 +1304,7 @@ function render(now) {
   }
 
 
-  // -------- Bot mode automatic movement logic (MODIFIED)-----------
+  // -------- Bot mode automatic movement logic -----------
   if (botMode && !animatingTranslation && !animatingRotation) {
       if (botPath && botPath.length > 0 && botPathIndex < botPath.length) {
         let nextCell = botPath[botPathIndex];
@@ -1281,16 +1340,11 @@ function render(now) {
                 targetAngle = desiredAngle;
             } else {
                 if (canMove(targetX, targetZ)) {
-                    // MODIFIED: Check bot's visual style to determine if it animates or teleports.
-                    if (botMoveStyle === 'smooth') {
-                        animatingTranslation = true;
-                        translationStart = performance.now();
-                        startPos = [...playerPos];
-                        targetPos = [targetX, playerPos[1], targetZ];
-                    } else { // 'block' style for bot is instant
-                        playerPos = [targetX, playerPos[1], targetZ];
-                        updateDiscovered();
-                    }
+                    // Bot always uses 'smooth' style now
+                    animatingTranslation = true;
+                    translationStart = performance.now();
+                    startPos = [...playerPos];
+                    targetPos = [targetX, playerPos[1], targetZ];
                 } else {
                     console.warn("Bot collision detected. Recomputing.");
                     computeBotPath();
@@ -1491,6 +1545,19 @@ function updateOverlay() {
 
   ctx.clearRect(0, 0, overlay.width, overlay.height);
 
+  // NEW: If paused, draw the pause screen and nothing else.
+  if (isPaused) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.fillRect(0, 0, overlay.width, overlay.height);
+      ctx.fillStyle = "white";
+      ctx.font = "bold 48px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("PAUSED", overlay.width / 2, overlay.height / 2);
+      ctx.font = "20px monospace";
+      ctx.fillText("Press P to Resume", overlay.width / 2, overlay.height / 2 + 40);
+      return;
+  }
+
   if (botMode && autoMapState !== 'IDLE') {
       const now = performance.now();
       const elapsed = now - autoMapTimer;
@@ -1517,11 +1584,11 @@ function updateOverlay() {
     drawMinimap(ctx, mazeData.maze, discovered, playerCoord, overlay.width, overlay.height);
   }
 
-  // MODIFIED: Draw the help menu with separated controls
+  // MODIFIED: Draw the help menu
   if (helpVisible) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
     const boxWidth = 400;
-    const boxHeight = 420;
+    const boxHeight = 380; // Adjusted height
     const boxX = 20;
     const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
@@ -1535,7 +1602,6 @@ function updateOverlay() {
     
     // Capitalize first letter for display
     const manualStyleStr = manualMoveStyle.charAt(0).toUpperCase() + manualMoveStyle.slice(1);
-    const botStyleStr = botMoveStyle.charAt(0).toUpperCase() + botMoveStyle.slice(1);
 
     const instructions = [
       "========== MAZE EXPLORER ==========",
@@ -1553,11 +1619,10 @@ function updateOverlay() {
       " 2 : Algorithm: DFS",
       " 3 : Algorithm: A*",
       " 4 : Algorithm: Explore",
-      " N : Toggle Bot Visual Style",
-      `   (Current: ${botStyleStr})`,
       "",
       "GENERAL:",
       " M : Toggle Full Map (Drag to Pan)",
+      " P : Pause / Resume Game",
       " H : Toggle Help (This Menu)",
       "",
       "GOAL: Find the Red Exit!",
@@ -1625,6 +1690,6 @@ window.onload = init;
      overlay.height = window.innerHeight;
      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
      if (mazeData && discovered) {
-        updateOverlay();
+        updateOverlay(); // Redraw overlay on resize
      }
  };
