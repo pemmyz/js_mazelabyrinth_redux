@@ -486,9 +486,8 @@ let isPaused = false; // NEW: For pausing the game
 
 // State for help menu and movement styles
 let helpVisible = false;
-// Player and bot movement styles
-let manualMoveStyle = 'free';   // Player style: 'free' or 'step'
-let botMoveStyle = 'smooth';      // Bot visual style is now always 'smooth'
+// NEW: Unified movement mode system
+let movementMode = 'auto'; // Player style: 'block', 'smooth', or 'auto'
 
 // Animation variables for smooth movement.
 let animatingTranslation = false;
@@ -532,6 +531,13 @@ const autoMapClosedWaitDuration = 6000; // 6 seconds map is hidden
 const keysDown = {};
 window.addEventListener("keydown", e => { keysDown[e.key.toLowerCase()] = true; onKeyDown(e); }); // Trigger original onKeyDown too
 window.addEventListener("keyup",   e => { keysDown[e.key.toLowerCase()] = false; });
+
+
+// NEW: Auto Smooth Movement State
+const autoSmoothThreshold = 3; // Tiles/frames to move before activating smooth mode
+let inAutoSmooth = false;      // Is the character currently in continuous smooth mode?
+let consecutiveMoveCounter = 0;  // How many times have we moved in the same direction?
+let lastMoveDirection = null;    // Stores the last direction of movement to detect changes
 
 
 // ============================ Pathfinding Helper Functions ============================
@@ -887,6 +893,7 @@ function restartGame() {
   botPathIndex = 0;
   autoStarted = false; // Reset auto-start flag
   lastManualInputTime = performance.now(); // Reset auto-start timer
+  resetAutoSmoothState(); // NEW: Reset auto-smooth movement state
 
   autoMapState = 'IDLE';
   autoMapTimer = 0;
@@ -943,6 +950,41 @@ function handleTurnRight() {
     targetAngle = (playerAngle - turnSpeed + 360) % 360;
 }
 
+// NEW: Helper to reset the auto-smooth state
+function resetAutoSmoothState() {
+    inAutoSmooth = false;
+    consecutiveMoveCounter = 0;
+    lastMoveDirection = null;
+}
+
+// NEW: Helper to trigger a single block-based move
+function triggerBlockMove() {
+    if (animatingTranslation || animatingRotation) return;
+
+    const angleRad = toRadian(playerAngle);
+    const dx = Math.sin(angleRad);
+    const dz = Math.cos(angleRad);
+
+    let targetGridX = Math.round(playerPos[0] - 0.5);
+    let targetGridZ = Math.round(playerPos[2] - 0.5);
+
+    // Determine target grid cell based on orientation
+    if (Math.abs(dx) > Math.abs(dz)) {
+        targetGridX += Math.sign(dx);
+    } else {
+        targetGridZ += Math.sign(dz);
+    }
+
+    if (targetGridZ >= 0 && targetGridZ < mazeHeight && targetGridX >= 0 && targetGridX < mazeWidth) {
+        const cell = mazeData.maze[targetGridZ].charAt(targetGridX);
+        if (cell !== '#' && cell !== 'B') {
+            animatingTranslation = true;
+            translationStart = performance.now();
+            startPos = [...playerPos];
+            targetPos = [targetGridX + 0.5, playerPos[1], targetGridZ + 0.5];
+        }
+    }
+}
 
 // ============================ Keyboard Controls (MODIFIED) ============================
 function onKeyDown(e) {
@@ -968,6 +1010,7 @@ function onKeyDown(e) {
       case "b":
           botMode = !botMode;
           console.log("Bot mode " + (botMode ? "enabled" : "disabled"));
+          resetAutoSmoothState(); // Reset state when toggling mode
           if (botMode) {
               computeBotPath();
               autoMapState = 'INITIAL_WAIT';
@@ -999,46 +1042,22 @@ function onKeyDown(e) {
       case "h":
           helpVisible = !helpVisible;
           return;
-      // 'N' key removed to make bot style permanent
-      // NEW: 'V' controls the PLAYER'S movement style
+      // MODIFIED: 'V' key now cycles through 'block', 'smooth', and the new 'auto' mode
       case "v":
-          manualMoveStyle = (manualMoveStyle === 'free') ? 'step' : 'free';
-          console.log("Manual movement style set to:", manualMoveStyle);
+          if (movementMode === 'block') {
+              movementMode = 'smooth';
+          } else if (movementMode === 'smooth') {
+              movementMode = 'auto';
+          } else {
+              movementMode = 'block';
+          }
+          resetAutoSmoothState(); // Reset state when changing mode
+          console.log("Player movement style set to:", movementMode);
           return;
   }
-
-  // 2) Handle Manual Player Movement
-  // MODIFIED: This logic now depends on manualMoveStyle being 'step'
-  if (!botMode && manualMoveStyle === 'step') {
-      if (['w', 's', 'arrowup', 'arrowdown'].includes(key)) {
-          if (animatingTranslation || animatingRotation) return;
-          
-          const moveDir = (key === 'w' || key === 'arrowup') ? 1 : -1;
-          
-          const angleRad = toRadian(playerAngle);
-          const dx = Math.sin(angleRad) * moveDir;
-          const dz = Math.cos(angleRad) * moveDir;
-          
-          let targetGridX = Math.round(playerPos[0] - 0.5);
-          let targetGridZ = Math.round(playerPos[2] - 0.5);
-
-          if (Math.abs(dx) > Math.abs(dz)) {
-              targetGridX += Math.sign(dx);
-          } else {
-              targetGridZ += Math.sign(dz);
-          }
-          
-          if (targetGridZ >= 0 && targetGridZ < mazeHeight && targetGridX >= 0 && targetGridX < mazeWidth) {
-              const cell = mazeData.maze[targetGridZ].charAt(targetGridX);
-              if (cell !== '#' && cell !== 'B') {
-                  animatingTranslation = true;
-                  translationStart = performance.now();
-                  startPos = [...playerPos];
-                  targetPos = [targetGridX + 0.5, playerPos[1], targetGridZ + 0.5];
-              }
-          }
-      }
-  }
+  
+  // 2) The block-based movement is no longer triggered here, but in the render loop
+  //    to handle held keys correctly for the new 'auto' mode.
 
   // 3) Check for any key that constitutes manual input to reset the auto-bot timer
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
@@ -1236,7 +1255,7 @@ function render(now) {
   const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
 
-  // --- Update Animation States ---
+  // --- Update Block-based Animation States ---
   if (animatingTranslation) {
     let t = (performance.now() - translationStart) / translationDuration;
     t = Math.min(t, 1.0);
@@ -1247,6 +1266,10 @@ function render(now) {
        animatingTranslation = false;
        playerPos = [...targetPos];
        updateDiscovered();
+       // For bot mode, being centered after a move can disable auto-smooth if it was on
+       if (botMode && inAutoSmooth) {
+           inAutoSmooth = false;
+       }
     }
   }
   if (animatingRotation) {
@@ -1259,109 +1282,159 @@ function render(now) {
        animatingRotation = false;
        playerAngle = targetAngle;
        updateDiscovered();
+       if (botMode) resetAutoSmoothState(); // Reset after bot turns
     }
   }
 
-  // -------- Handle Manual Player Movement -----------
-  // MODIFIED: Logic now branches based on the 'manualMoveStyle' variable
-  if (!botMode) {
-      // Free-roam style (hold to move)
-      if (manualMoveStyle === 'free') {
-          const manualMoveSpeed = 4.5;
-          let moveX = 0;
-          let moveZ = 0;
+  // MODIFIED: Centralized movement logic
+  if (botMode) {
+    // -------- Bot mode automatic movement logic -----------
+    if (inAutoSmooth) {
+        // CONTINUOUS BOT MOVEMENT (AUTO-SMOOTH ACTIVE)
+        const botMoveSpeed = 4.5;
+        if (botPath && botPathIndex < botPath.length) {
+            const nextCell = botPath[botPathIndex];
+            const targetX = nextCell.x + 0.5;
+            const targetZ = nextCell.y + 0.5;
+            const dx = targetX - playerPos[0];
+            const dz = targetZ - playerPos[2];
 
-          const rad = toRadian(playerAngle);
-          if (keysDown["w"] || keysDown["arrowup"]) {
-              moveX += Math.sin(rad) * manualMoveSpeed * deltaTime;
-              moveZ += Math.cos(rad) * manualMoveSpeed * deltaTime;
-          }
-          if (keysDown["s"] || keysDown["arrowdown"]) {
-              moveX -= Math.sin(rad) * manualMoveSpeed * deltaTime;
-              moveZ -= Math.cos(rad) * manualMoveSpeed * deltaTime;
-          }
+            const distSq = dx * dx + dz * dz;
+            if (distSq < 0.01) { // Reached waypoint
+                botPathIndex++;
+                resetAutoSmoothState(); // Re-evaluate for next move
+            } else {
+                const moveVec = glMatrix.vec2.fromValues(dx, dz);
+                glMatrix.vec2.normalize(moveVec, moveVec);
+                const moveX = moveVec[0] * botMoveSpeed * deltaTime;
+                const moveZ = moveVec[1] * botMoveSpeed * deltaTime;
+                
+                const newPlayerX = playerPos[0] + moveX;
+                const newPlayerZ = playerPos[2] + moveZ;
 
-          if (moveX !== 0 || moveZ !== 0) {
-              const targetX = playerPos[0] + moveX;
-              const targetZ = playerPos[2] + moveZ;
-              if (canMove(targetX, targetZ)) {
-                  playerPos[0] = targetX;
-                  playerPos[2] = targetZ;
-                  updateDiscovered();
-              }
-          }
-      }
-      // Step-by-step style is handled entirely in onKeyDown.
-      
-      // Turning is handled for BOTH manual styles here.
-      if (!animatingRotation) {
-          if (keysDown["a"] || keysDown["arrowleft"]) {
-              handleTurnLeft();
-          } else if (keysDown["d"] || keysDown["arrowright"]) {
-              handleTurnRight();
-          }
-      }
-  }
+                if (canMove(newPlayerX, newPlayerZ)) {
+                    playerPos[0] = newPlayerX;
+                    playerPos[2] = newPlayerZ;
+                    updateDiscovered();
+                } else {
+                    console.warn("Bot collision during auto-smooth. Recomputing path.");
+                    resetAutoSmoothState();
+                    computeBotPath();
+                }
+            }
+        }
+    } else if (!animatingTranslation && !animatingRotation) {
+        // BLOCK-BASED BOT MOVEMENT
+        if (botPath && botPath.length > 0 && botPathIndex < botPath.length) {
+            let nextCell = botPath[botPathIndex];
+            let targetX = nextCell.x + 0.5;
+            let targetZ = nextCell.y + 0.5;
+            let dx = targetX - playerPos[0];
+            let dz = targetZ - playerPos[2];
+            
+            let moveDir = {dx: Math.sign(dx), dz: Math.sign(dz)};
 
+            if (JSON.stringify(moveDir) !== JSON.stringify(lastMoveDirection)) {
+                resetAutoSmoothState();
+            }
+            lastMoveDirection = moveDir;
 
-  // -------- Bot mode automatic movement logic -----------
-  if (botMode && !animatingTranslation && !animatingRotation) {
-      if (botPath && botPath.length > 0 && botPathIndex < botPath.length) {
-        let nextCell = botPath[botPathIndex];
-        let targetX = nextCell.x + 0.5;
-        let targetZ = nextCell.y + 0.5;
-        let dx = targetX - playerPos[0];
-        let dz = targetZ - playerPos[2];
-        let distSq = dx*dx + dz*dz;
-
-         if (distSq < 0.01) {
-             botPathIndex++;
-             if (botPathIndex >= botPath.length) {
-                 console.log("Bot reached end of path.");
-             } else {
-                nextCell = botPath[botPathIndex];
-                targetX = nextCell.x + 0.5;
-                targetZ = nextCell.y + 0.5;
-                dx = targetX - playerPos[0];
-                dz = targetZ - playerPos[2];
-             }
-         }
-
-        if (botPathIndex < botPath.length) {
             let desiredAngle = (Math.atan2(dx, dz) * (180 / Math.PI) + 360) % 360;
             let angleDiff = desiredAngle - playerAngle;
             if (angleDiff > 180) angleDiff -= 360;
             if (angleDiff <= -180) angleDiff += 360;
 
-            if (Math.abs(angleDiff) > 1) {
+            if (Math.abs(angleDiff) > 1) { // Needs to turn
                 animatingRotation = true;
                 rotationStart = performance.now();
                 startAngle = playerAngle;
                 targetAngle = desiredAngle;
-            } else {
-                if (canMove(targetX, targetZ)) {
-                    // Bot always uses 'smooth' style now
-                    animatingTranslation = true;
-                    translationStart = performance.now();
-                    startPos = [...playerPos];
-                    targetPos = [targetX, playerPos[1], targetZ];
-                } else {
-                    console.warn("Bot collision detected. Recomputing.");
-                    computeBotPath();
+            } else { // Aligned, ready to move
+                triggerBlockMove();
+                consecutiveMoveCounter++;
+                if (consecutiveMoveCounter >= autoSmoothThreshold) {
+                    inAutoSmooth = true;
                 }
+                botPathIndex++;
             }
+        } else if (botMode) {
+             let playerCellX = Math.floor(playerPos[0]);
+             let playerCellZ = Math.floor(playerPos[2]);
+             if (mazeData.maze[playerCellZ].charAt(playerCellX) !== 'E') {
+                console.log("Bot has no path. Recomputing...");
+                computeBotPath();
+             }
         }
-      } else if (botMode) {
-        let playerCellX = Math.floor(playerPos[0]);
-        let playerCellZ = Math.floor(playerPos[2]);
-         if (playerCellZ < 0 || playerCellZ >= mazeHeight || playerCellX < 0 || playerCellX >= mazeWidth ||
-             mazeData.maze[playerCellZ].charAt(playerCellX) !== 'E') {
-             console.log("Bot has no path. Recomputing...");
-             computeBotPath();
-         }
-      }
-  }
+    }
+  } else {
+    // -------- Handle Manual Player Movement -----------
+    const moveSpeed = 4.5;
+    let moveKey = null;
+    if (keysDown["w"] || keysDown["arrowup"]) moveKey = 'w';
+    if (keysDown["s"] || keysDown["arrowdown"]) moveKey = 's';
+    
+    if (moveKey !== lastMoveDirection) {
+        resetAutoSmoothState();
+    }
+    lastMoveDirection = moveKey;
 
+    if (moveKey) {
+        switch (movementMode) {
+            case 'smooth':
+                const rad = toRadian(playerAngle);
+                const moveDir = (moveKey === 'w') ? 1 : -1;
+                const moveX = Math.sin(rad) * moveDir * moveSpeed * deltaTime;
+                const moveZ = Math.cos(rad) * moveDir * moveSpeed * deltaTime;
+                if (canMove(playerPos[0] + moveX, playerPos[2] + moveZ)) {
+                    playerPos[0] += moveX;
+                    playerPos[2] += moveZ;
+                    updateDiscovered();
+                }
+                break;
+
+            case 'block':
+                if (!animatingTranslation && !animatingRotation) {
+                    triggerBlockMove();
+                }
+                break;
+
+            case 'auto':
+                if (inAutoSmooth) {
+                    const rad = toRadian(playerAngle);
+                    const moveDir = (moveKey === 'w') ? 1 : -1;
+                    const moveX_auto = Math.sin(rad) * moveDir * moveSpeed * deltaTime;
+                    const moveZ_auto = Math.cos(rad) * moveDir * moveSpeed * deltaTime;
+                    if (canMove(playerPos[0] + moveX_auto, playerPos[2] + moveZ_auto)) {
+                        playerPos[0] += moveX_auto;
+                        playerPos[2] += moveZ_auto;
+                        updateDiscovered();
+                    } else {
+                        resetAutoSmoothState(); // Hit a wall, stop auto mode
+                    }
+                } else {
+                    if (!animatingTranslation && !animatingRotation) {
+                        triggerBlockMove();
+                        consecutiveMoveCounter++;
+                        if (consecutiveMoveCounter >= autoSmoothThreshold) {
+                            inAutoSmooth = true;
+                        }
+                    }
+                }
+                break;
+        }
+    }
+    
+    // Player turning logic is independent of movement mode
+    if (!animatingRotation) {
+        if (keysDown["a"] || keysDown["arrowleft"]) {
+            handleTurnLeft();
+            resetAutoSmoothState();
+        } else if (keysDown["d"] || keysDown["arrowright"]) {
+            handleTurnRight();
+            resetAutoSmoothState();
+        }
+    }
+  }
 
   // --- WebGL Drawing ---
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
@@ -1394,7 +1467,7 @@ function render(now) {
   updateOverlay();
 
   // --- Check for Game Win Condition ---
-  if (!animatingTranslation && !animatingRotation) {
+  if (!animatingTranslation && !inAutoSmooth) { // Don't check while moving smoothly
     let currentCellX = Math.floor(playerPos[0]);
     let currentCellZ = Math.floor(playerPos[2]);
      if (currentCellZ >= 0 && currentCellZ < mazeHeight && currentCellX >= 0 && currentCellX < mazeWidth) {
@@ -1467,7 +1540,8 @@ function drawFullMap(ctx, maze, discovered, playerCoord, fullMapOffsetX, fullMap
        ctx.lineWidth = Math.max(1, cellSize / 4);
        ctx.beginPath();
        ctx.moveTo(playerMapX, playerMapY);
-       for (let k = botPathIndex; k < botPath.length; k++) {
+       // MODIFIED: Draw path from current bot path index
+       for (let k = Math.max(0, botPathIndex -1); k < botPath.length; k++) {
            let node = botPath[k];
            ctx.lineTo(fullMapOffsetX + (node.x + 0.5) * cellSize, fullMapOffsetY + (node.y + 0.5) * cellSize);
        }
@@ -1601,7 +1675,7 @@ function updateOverlay() {
     let textY = boxY + 35;
     
     // Capitalize first letter for display
-    const manualStyleStr = manualMoveStyle.charAt(0).toUpperCase() + manualMoveStyle.slice(1);
+    const moveStyleStr = movementMode.charAt(0).toUpperCase() + movementMode.slice(1);
 
     const instructions = [
       "========== MAZE EXPLORER ==========",
@@ -1611,7 +1685,7 @@ function updateOverlay() {
       " A/Left Arrow : Turn Left",
       " D/Right Arrow: Turn Right",
       " V            : Toggle Player Move Style",
-      `   (Current: ${manualStyleStr})`,
+      `   (Current: ${moveStyleStr})`,
       "",
       "BOT CONTROLS:",
       " B : Toggle Bot On/Off",
@@ -1664,6 +1738,7 @@ function updateOverlay() {
           botMode = true;
           selectedAlgorithm = "explore";
           computeBotPath();
+          resetAutoSmoothState();
           autoMapState = 'INITIAL_WAIT';
           autoMapTimer = performance.now();
       }
