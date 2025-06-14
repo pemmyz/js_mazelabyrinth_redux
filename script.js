@@ -316,7 +316,7 @@ function createMap(width, height, maxRooms, roomMinSize, roomMaxSize, seed) {
                 let dirs = [[-1,0], [1,0], [0,-1], [0,1], [-1,-1], [-1,1], [1,-1], [1,1]]; // Check diagonals too
                 for (let d of dirs) {
                     let nx = j + d[0], ny = i + d[1];
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    if (nx >= 0 && nx < width && ny >= 0 && ny >= 0 && ny < height) {
                         if (mapGrid[ny][nx] !== '#') { // Any non-wall is considered "open"
                             adjacentOpen = true;
                             break;
@@ -533,7 +533,7 @@ window.addEventListener("keydown", e => { keysDown[e.key.toLowerCase()] = true; 
 window.addEventListener("keyup",   e => { keysDown[e.key.toLowerCase()] = false; });
 
 
-// NEW: Auto Smooth Movement State
+// NEW: Auto Smooth Movement State (for BOTH player and bot)
 const autoSmoothThreshold = 3; // Tiles/frames to move before activating smooth mode
 let inAutoSmooth = false;      // Is the character currently in continuous smooth mode?
 let consecutiveMoveCounter = 0;  // How many times have we moved in the same direction?
@@ -957,7 +957,7 @@ function resetAutoSmoothState() {
     lastMoveDirection = null;
 }
 
-// NEW: Helper to trigger a single block-based move
+// NEW: Helper to trigger a single block-based move for the player
 function triggerBlockMove() {
     if (animatingTranslation || animatingRotation) return;
 
@@ -1266,10 +1266,6 @@ function render(now) {
        animatingTranslation = false;
        playerPos = [...targetPos];
        updateDiscovered();
-       // For bot mode, being centered after a move can disable auto-smooth if it was on
-       if (botMode && inAutoSmooth) {
-           inAutoSmooth = false;
-       }
     }
   }
   if (animatingRotation) {
@@ -1282,7 +1278,7 @@ function render(now) {
        animatingRotation = false;
        playerAngle = targetAngle;
        updateDiscovered();
-       if (botMode) resetAutoSmoothState(); // Reset after bot turns
+       if (botMode) resetAutoSmoothState(); // A turn always resets the bot's smooth counter
     }
   }
 
@@ -1301,30 +1297,50 @@ function render(now) {
 
             const distSq = dx * dx + dz * dz;
             if (distSq < 0.01) { // Reached waypoint
+                playerPos[0] = targetX; // Snap to center
+                playerPos[2] = targetZ;
                 botPathIndex++;
-                resetAutoSmoothState(); // Re-evaluate for next move
+
+                // Check if the path is over or if a turn is next
+                if (botPathIndex >= botPath.length) {
+                    resetAutoSmoothState(); // Path finished
+                } else {
+                    // Check if the direction changes at this new node.
+                    const newTarget = botPath[botPathIndex];
+                    const prevTarget = botPath[botPathIndex - 1];
+                    const newMoveDir = {
+                        dx: Math.sign(newTarget.x - prevTarget.x),
+                        dz: Math.sign(newTarget.y - prevTarget.y)
+                    };
+
+                    if (JSON.stringify(newMoveDir) !== JSON.stringify(lastMoveDirection)) {
+                        // The direction changed! Exit smooth mode to handle the turn precisely.
+                        resetAutoSmoothState();
+                    } else {
+                        // Path continues straight, stay in smooth mode.
+                        lastMoveDirection = newMoveDir;
+                    }
+                }
             } else {
+                // Continue moving smoothly towards the target
                 const moveVec = glMatrix.vec2.fromValues(dx, dz);
                 glMatrix.vec2.normalize(moveVec, moveVec);
                 const moveX = moveVec[0] * botMoveSpeed * deltaTime;
                 const moveZ = moveVec[1] * botMoveSpeed * deltaTime;
                 
-                const newPlayerX = playerPos[0] + moveX;
-                const newPlayerZ = playerPos[2] + moveZ;
+                playerPos[0] += moveX;
+                playerPos[2] += moveZ;
+                updateDiscovered();
 
-                if (canMove(newPlayerX, newPlayerZ)) {
-                    playerPos[0] = newPlayerX;
-                    playerPos[2] = newPlayerZ;
-                    updateDiscovered();
-                } else {
-                    console.warn("Bot collision during auto-smooth. Recomputing path.");
-                    resetAutoSmoothState();
-                    computeBotPath();
-                }
+                // Also smoothly turn to face the direction of movement
+                const desiredAngle = (Math.atan2(dx, dz) * (180 / Math.PI) + 360) % 360;
+                playerAngle = lerpAngle(playerAngle, desiredAngle, Math.min(1.0, 10 * deltaTime));
             }
+        } else {
+             resetAutoSmoothState(); // No path, exit smooth mode.
         }
     } else if (!animatingTranslation && !animatingRotation) {
-        // BLOCK-BASED BOT MOVEMENT
+        // BLOCK-BASED BOT MOVEMENT (to handle turns and start of straightaways)
         if (botPath && botPath.length > 0 && botPathIndex < botPath.length) {
             let nextCell = botPath[botPathIndex];
             let targetX = nextCell.x + 0.5;
@@ -1350,14 +1366,19 @@ function render(now) {
                 startAngle = playerAngle;
                 targetAngle = desiredAngle;
             } else { // Aligned, ready to move
-                triggerBlockMove();
+                // This IS the bot's block move trigger.
+                animatingTranslation = true;
+                translationStart = performance.now();
+                startPos = [...playerPos];
+                targetPos = [targetX, playerPos[1], targetZ];
+
                 consecutiveMoveCounter++;
                 if (consecutiveMoveCounter >= autoSmoothThreshold) {
                     inAutoSmooth = true;
                 }
-                botPathIndex++;
+                botPathIndex++; // The move is initiated, so we now target the next path item.
             }
-        } else if (botMode) {
+        } else if (botMode) { // Path finished or doesn't exist
              let playerCellX = Math.floor(playerPos[0]);
              let playerCellZ = Math.floor(playerPos[2]);
              if (mazeData.maze[playerCellZ].charAt(playerCellX) !== 'E') {
