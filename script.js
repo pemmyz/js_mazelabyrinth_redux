@@ -1349,7 +1349,11 @@ function initBuffer(dataArray) {
 
 // ============================ Render Loop ============================
 function render(now) {
-  // NEW: Handle pause state.
+  // --- FIX: Handle Gamepad Input ---
+  // Moved here so it runs even when paused, allowing un-pausing via gamepad.
+  handleGamepadInput();
+    
+  // Handle pause state.
   if (isPaused) {
       requestAnimationFrame(render); // Keep loop alive but skip updates.
       return;
@@ -1357,9 +1361,6 @@ function render(now) {
 
   const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
-
-  // --- NEW: Handle Gamepad Input ---
-  handleGamepadInput();
 
   // --- Update Block-based Animation States ---
   if (animatingTranslation) {
