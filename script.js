@@ -539,6 +539,10 @@ let inAutoSmooth = false;      // Is the character currently in continuous smoot
 let consecutiveMoveCounter = 0;  // How many times have we moved in the same direction?
 let lastMoveDirection = null;    // Stores the last direction of movement to detect changes
 
+// ----------- NEW: GAMEPAD STATE -----------
+let activeGamepadIndex = null;
+const gamepadButtonCooldowns = {}; // To prevent rapid toggling of features
+
 
 // ============================ Pathfinding Helper Functions ============================
 // Returns a string key for coordinate objects.
@@ -986,7 +990,103 @@ function triggerBlockMove() {
     }
 }
 
-// ============================ Keyboard Controls (MODIFIED) ============================
+// ============================ Keyboard & Gamepad Controls ============================
+
+// --- NEW: Gamepad Input Handler ---
+function setButtonCooldown(gamepadIndex, buttonIndex) {
+    if (!gamepadButtonCooldowns[gamepadIndex]) {
+        gamepadButtonCooldowns[gamepadIndex] = {};
+    }
+    gamepadButtonCooldowns[gamepadIndex][buttonIndex] = true;
+    setTimeout(() => {
+        // Check if it still exists before deleting
+        if (gamepadButtonCooldowns[gamepadIndex]) {
+           delete gamepadButtonCooldowns[gamepadIndex][buttonIndex];
+        }
+    }, 300); // 300ms cooldown
+}
+
+function handleGamepadInput() {
+    const polledPads = navigator.getGamepads ? navigator.getGamepads() : [];
+    if (!polledPads || polledPads.length === 0) return;
+
+    // --- Part 1: Auto-assign first connected gamepad ---
+    if (activeGamepadIndex === null) {
+        for (let i = 0; i < polledPads.length; i++) {
+            if (polledPads[i]) {
+                console.log(`Gamepad ${i} automatically assigned.`);
+                activeGamepadIndex = i;
+                break;
+            }
+        }
+    }
+    
+    // --- Part 2: Handle Input from the active gamepad ---
+    if (activeGamepadIndex !== null) {
+        const pad = polledPads[activeGamepadIndex];
+        
+        // Handle disconnection
+        if (!pad) {
+            console.log(`Assigned Gamepad (Index ${activeGamepadIndex}) disconnected.`);
+            activeGamepadIndex = null;
+            return;
+        }
+
+        // --- Check for manual action to reset auto-bot timer ---
+        let isManualAction = false;
+        const DEADZONE = 0.25;
+
+        // Read Axes for continuous movement (updates keysDown object)
+        const stickX_L = pad.axes[0] || 0;
+        const stickY_L = pad.axes[1] || 0;
+        const stickX_R = pad.axes[2] || 0; // Right stick for turning
+
+        const dpadLeft = pad.buttons[14] && pad.buttons[14].pressed;
+        const dpadRight = pad.buttons[15] && pad.buttons[15].pressed;
+        const dpadUp = pad.buttons[12] && pad.buttons[12].pressed;
+        const dpadDown = pad.buttons[13] && pad.buttons[13].pressed;
+
+        keysDown["w"] = (stickY_L < -DEADZONE) || dpadUp;
+        keysDown["s"] = (stickY_L > DEADZONE) || dpadDown;
+        keysDown["a"] = (stickX_L < -DEADZONE) || (stickX_R < -DEADZONE) || dpadLeft;
+        keysDown["d"] = (stickX_L > DEADZONE) || (stickX_R > DEADZONE) || dpadRight;
+        
+        if (keysDown["w"] || keysDown["s"] || keysDown["a"] || keysDown["d"]) {
+            isManualAction = true;
+        }
+
+        // Read Buttons for toggle actions (with cooldowns)
+        const buttonMap = {
+            0: 'v', // 'A' button -> Toggle move style
+            2: 'b', // 'X' button -> Toggle Bot
+            3: 'm', // 'Y' button -> Toggle Map
+            8: 'h', // 'Select' button -> Toggle Help
+            9: 'p'  // 'Start' button -> Pause
+        };
+
+        for (const btnIndex in buttonMap) {
+            if (pad.buttons[btnIndex] && pad.buttons[btnIndex].pressed) {
+                if (!gamepadButtonCooldowns[activeGamepadIndex] || !gamepadButtonCooldowns[activeGamepadIndex][btnIndex]) {
+                    const keyToSimulate = buttonMap[btnIndex];
+                    console.log(`Gamepad pressed: ${keyToSimulate.toUpperCase()}`);
+                    
+                    // Simulate a keydown event for these functions
+                    onKeyDown({ key: keyToSimulate }); 
+                    
+                    setButtonCooldown(activeGamepadIndex, parseInt(btnIndex));
+                    isManualAction = true;
+                }
+            }
+        }
+        
+        if (isManualAction) {
+           lastManualInputTime = performance.now();
+           autoStarted = false;
+        }
+    }
+}
+
+
 function onKeyDown(e) {
   let isManualAction = false;
   let key = e.key.toLowerCase();
@@ -1038,9 +1138,11 @@ function onKeyDown(e) {
               dragOffsetX = 0;
               dragOffsetY = 0;
           }
+          isManualAction = true;
           return;
       case "h":
           helpVisible = !helpVisible;
+          isManualAction = true;
           return;
       // MODIFIED: 'V' key now cycles through 'block', 'smooth', and the new 'auto' mode
       case "v":
@@ -1053,6 +1155,7 @@ function onKeyDown(e) {
           }
           resetAutoSmoothState(); // Reset state when changing mode
           console.log("Player movement style set to:", movementMode);
+          isManualAction = true;
           return;
   }
   
@@ -1254,6 +1357,9 @@ function render(now) {
 
   const deltaTime = (now - lastFrameTime) / 1000.0;
   lastFrameTime = now;
+
+  // --- NEW: Handle Gamepad Input ---
+  handleGamepadInput();
 
   // --- Update Block-based Animation States ---
   if (animatingTranslation) {
@@ -1649,7 +1755,7 @@ function updateOverlay() {
       ctx.textAlign = "center";
       ctx.fillText("PAUSED", overlay.width / 2, overlay.height / 2);
       ctx.font = "20px monospace";
-      ctx.fillText("Press P to Resume", overlay.width / 2, overlay.height / 2 + 40);
+      ctx.fillText("Press P or START to Resume", overlay.width / 2, overlay.height / 2 + 40);
       return;
   }
 
@@ -1681,9 +1787,9 @@ function updateOverlay() {
 
   // MODIFIED: Draw the help menu
   if (helpVisible) {
-    ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    const boxWidth = 400;
-    const boxHeight = 380; // Adjusted height
+    ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+    const boxWidth = 500;
+    const boxHeight = 440; // Adjusted height
     const boxX = 20;
     const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
@@ -1699,33 +1805,32 @@ function updateOverlay() {
     const moveStyleStr = movementMode.charAt(0).toUpperCase() + movementMode.slice(1);
 
     const instructions = [
-      "========== MAZE EXPLORER ==========",
-      "PLAYER CONTROLS:",
-      " W/Up Arrow   : Move Forward",
-      " S/Down Arrow : Move Backward",
-      " A/Left Arrow : Turn Left",
-      " D/Right Arrow: Turn Right",
-      " V            : Toggle Player Move Style",
+      "=============== MAZE EXPLORER ===============",
+      "KEYBOARD:",
+      " W/A/S/D / Arrows   : Move & Turn",
+      " V                  : Toggle Move Style",
       `   (Current: ${moveStyleStr})`,
       "",
+      "GAMEPAD (CONTROLLER):",
+      " Left Stick/D-Pad   : Move & Turn",
+      " Right Stick        : Turn",
+      " (A) Button         : Toggle Move Style",
+      "",
       "BOT CONTROLS:",
-      " B : Toggle Bot On/Off",
-      " 1 : Algorithm: BFS",
-      " 2 : Algorithm: DFS",
-      " 3 : Algorithm: A*",
-      " 4 : Algorithm: Explore",
+      " B / (X) Button     : Toggle Bot On/Off",
+      " 1,2,3,4            : Select Algorithm",
       "",
       "GENERAL:",
-      " M : Toggle Full Map (Drag to Pan)",
-      " P : Pause / Resume Game",
-      " H : Toggle Help (This Menu)",
+      " M / (Y) Button     : Toggle Full Map",
+      " P / Start Button   : Pause / Resume",
+      " H / Select Button  : Toggle Help Menu",
       "",
       "GOAL: Find the Red Exit!",
     ];
 
     for (let i = 0; i < instructions.length; i++) {
       if (instructions[i].trim().startsWith("(")) {
-        ctx.fillText(instructions[i], textX + 15, textY + i * lineHeight);
+        ctx.fillText(instructions[i], textX + 20, textY + i * lineHeight);
       } else {
         ctx.fillText(instructions[i], textX, textY + i * lineHeight);
       }
@@ -1736,7 +1841,7 @@ function updateOverlay() {
         ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
         ctx.font = "16px monospace";
         ctx.textAlign = "left";
-        ctx.fillText("H for Help", 20, overlay.height - 20);
+        ctx.fillText("H or SELECT for Help", 20, overlay.height - 20);
      }
   }
 
@@ -1766,7 +1871,7 @@ function updateOverlay() {
   }
 
    if (botMode) {
-       let statusText = `Bot Active (${selectedAlgorithm.toUpperCase()}). Press B to toggle.`;
+       let statusText = `Bot Active (${selectedAlgorithm.toUpperCase()}). Press B or (X) to toggle.`;
        ctx.fillText(statusText, centerX, centerY);
    }
    ctx.textAlign = "left";
@@ -1789,3 +1894,23 @@ window.onload = init;
         updateOverlay(); // Redraw overlay on resize
      }
  };
+
+// --- NEW: GAMEPAD CONNECTION LISTENERS ---
+window.addEventListener("gamepadconnected", e => {
+    console.log(`Gamepad connected at index ${e.gamepad.index}: ${e.gamepad.id}.`);
+    // If no gamepad is currently active, assign this one.
+    if (activeGamepadIndex === null) {
+        activeGamepadIndex = e.gamepad.index;
+        console.log(`Gamepad ${activeGamepadIndex} is now active.`);
+    }
+});
+window.addEventListener("gamepaddisconnected", e => {
+    console.log(`Gamepad disconnected from index ${e.gamepad.index}: ${e.gamepad.id}.`);
+    // If the disconnected gamepad was the active one, release it.
+    if (activeGamepadIndex === e.gamepad.index) {
+        console.log(`Active gamepad ${activeGamepadIndex} was disconnected.`);
+        activeGamepadIndex = null;
+        // Optionally, clear button cooldowns for this controller
+        delete gamepadButtonCooldowns[e.gamepad.index];
+    }
+});
