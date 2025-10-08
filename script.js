@@ -543,6 +543,13 @@ let lastMoveDirection = null;    // Stores the last direction of movement to det
 let activeGamepadIndex = null;
 const gamepadButtonCooldowns = {}; // To prevent rapid toggling of features
 
+// ----------- NEW: VIEW BOBBING STATE -----------
+let viewBobbingEnabled = true;
+let bobbingTime = 0;
+const bobbingFrequency = 10; // How fast the bobbing is
+const bobbingAmplitude = 0.03; // How high/intense the bobbing is
+let bobbingCheckboxRect = { x: 0, y: 0, w: 0, h: 0 }; // For click detection
+
 
 // ============================ Pathfinding Helper Functions ============================
 // Returns a string key for coordinate objects.
@@ -908,7 +915,7 @@ function restartGame() {
    updateDiscovered();
 }
 
-// ============================ Mouse Event Handlers for Dragging ============================
+// ============================ Mouse/Click Event Handlers ============================
 function onMouseDown(e) {
   // Only allow dragging if the full map is visible
   if (fullMapVisible && !isPaused) {
@@ -933,6 +940,28 @@ function onMouseUp(e) {
   if (isDragging) {
     isDragging = false;
   }
+}
+// NEW: Handler for clicking UI elements like checkboxes
+function onCanvasClick(e) {
+    // Only handle clicks if the help menu is visible and game is not paused
+    if (!helpVisible || isPaused) return;
+
+    // Get click coordinates relative to the canvas
+    const rect = e.target.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Check if the click is within the view bobbing checkbox bounds
+    if (clickX >= bobbingCheckboxRect.x && clickX <= bobbingCheckboxRect.x + bobbingCheckboxRect.w &&
+        clickY >= bobbingCheckboxRect.y && clickY <= bobbingCheckboxRect.y + bobbingCheckboxRect.h) {
+
+        viewBobbingEnabled = !viewBobbingEnabled;
+        console.log("View bobbing " + (viewBobbingEnabled ? "enabled" : "disabled"));
+
+        // Redraw the overlay to show the change immediately
+        updateOverlay();
+        e.preventDefault(); // Prevent this click from triggering other actions
+    }
 }
 
 // ============================ Movement Helper Functions ============================
@@ -1310,6 +1339,7 @@ function init() {
   overlay.addEventListener("mousemove", onMouseMove, false);
   overlay.addEventListener("mouseup", onMouseUp, false);
   overlay.addEventListener("mouseleave", onMouseUp, false);
+  overlay.addEventListener("click", onCanvasClick, false); // NEW: Listener for UI clicks
 
   lastManualInputTime = performance.now();
   lastFrameTime = performance.now();
@@ -1388,6 +1418,27 @@ function render(now) {
        if (botMode) resetAutoSmoothState(); // A turn always resets the bot's smooth counter
     }
   }
+
+  // --- NEW: Update View Bobbing ---
+  let isMoving = false;
+  if (botMode) {
+      isMoving = inAutoSmooth || animatingTranslation;
+  } else {
+      const isMoveKeyDown = keysDown["w"] || keysDown["arrowup"] || keysDown["s"] || keysDown["arrowdown"];
+      isMoving = (movementMode === 'smooth' && isMoveKeyDown) || animatingTranslation || (movementMode === 'auto' && isMoveKeyDown);
+  }
+
+  if (isMoving && viewBobbingEnabled) {
+      bobbingTime += deltaTime;
+  } else {
+      // If not moving, smoothly return bobbing to a neutral (zero) position
+      let remainder = bobbingTime * bobbingFrequency % Math.PI;
+      let targetBobTime = bobbingTime - (remainder / bobbingFrequency);
+      if (Math.abs(bobbingTime - targetBobTime) > 0.01) {
+          bobbingTime = lerp(bobbingTime, targetBobTime, deltaTime * 8);
+      }
+  }
+
 
   // MODIFIED: Centralized movement logic
   if (botMode) {
@@ -1578,7 +1629,22 @@ function render(now) {
   gl.uniformMatrix4fv(uniformLocations.uProjection, false, projectionMatrix);
 
   const viewMatrix = glMatrix.mat4.create();
-  const eye = [playerPos[0], playerPos[1] + 0.5, playerPos[2]];
+  const eye = [playerPos[0], playerPos[1] + 0.5, playerPos[2]]; // Base eye position
+
+  // NEW: Apply view bobbing to the camera's eye position
+  if (viewBobbingEnabled) {
+    const verticalBob = Math.sin(bobbingTime * bobbingFrequency) * bobbingAmplitude;
+    const horizontalBob = Math.cos(bobbingTime * bobbingFrequency * 0.5) * bobbingAmplitude; // MODIFIED LINE
+
+    eye[1] += verticalBob; // Apply vertical bob
+
+    const radAngle = toRadian(playerAngle);
+    const rightVecX = Math.cos(radAngle);
+    const rightVecZ = -Math.sin(radAngle);
+    eye[0] += rightVecX * horizontalBob; // Apply horizontal sway
+    eye[2] += rightVecZ * horizontalBob;
+  }
+
   const direction = [Math.sin(toRadian(playerAngle)), 0, Math.cos(toRadian(playerAngle))];
   const center = [eye[0] + direction[0], eye[1] + direction[1], eye[2] + direction[2]];
   const up = [0, 1, 0];
@@ -1790,7 +1856,7 @@ function updateOverlay() {
   if (helpVisible) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
     const boxWidth = 500;
-    const boxHeight = 440; // Adjusted height
+    const boxHeight = 470; // Adjusted height for new option
     const boxX = 20;
     const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
@@ -1835,6 +1901,36 @@ function updateOverlay() {
       } else {
         ctx.fillText(instructions[i], textX, textY + i * lineHeight);
       }
+    }
+    
+    // NEW: Draw the view bobbing checkbox and label
+    const bobbingLineY = textY + (instructions.length + 1) * lineHeight;
+    const bobbingText = "View Bobbing (Click to Toggle)";
+    const checkboxSize = 14;
+    const checkboxPadding = 10;
+
+    ctx.fillStyle = "white";
+    ctx.font = "15px monospace";
+    ctx.fillText(bobbingText, textX, bobbingLineY);
+
+    const textMetrics = ctx.measureText(bobbingText);
+    const checkboxX = textX + textMetrics.width + checkboxPadding;
+    const checkboxY = bobbingLineY - checkboxSize * 0.8; // Align with text baseline
+
+    // Store the checkbox's screen position for click detection
+    bobbingCheckboxRect = { x: checkboxX, y: checkboxY, w: checkboxSize, h: checkboxSize };
+
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bobbingCheckboxRect.x, bobbingCheckboxRect.y, bobbingCheckboxRect.w, bobbingCheckboxRect.h);
+
+    if (viewBobbingEnabled) {
+        ctx.fillStyle = "lime";
+        ctx.font = `bold ${checkboxSize}px monospace`;
+        ctx.textAlign = "center";
+        ctx.fillText("✓", checkboxX + checkboxSize / 2, bobbingLineY + 1);
+        ctx.textAlign = "left"; // Reset for next draw calls
+        ctx.font = "15px monospace";
     }
 
   } else {
