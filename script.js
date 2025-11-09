@@ -678,25 +678,19 @@ function cellInRoom(cell, room) {
   return cell.x >= room.x1 && cell.x < room.x2 && cell.y >= room.y1 && cell.y < room.y2;
 }
 
-// Explore mode pathfinding: Visit *all* room centers, ending at the exit.
+// Explore mode pathfinding: Visit *all* room centers, then go to the exit.
 function explorePath(start, goal, maze, rooms) {
+    // Step 1: Create a list of all room centers to visit, EXCLUDING the exit goal.
     let roomCenters = rooms.map(room => ({ x: room.center[0], y: room.center[1] }));
-    // Ensure goal is reachable, add it as a target if not already a center
-    if (!roomCenters.some(c => c.x === goal.x && c.y === goal.y)) {
-         // Add goal if it's not already a center - check if it's walkable first
-         if (maze[goal.y].charAt(goal.x) === ' ' || maze[goal.y].charAt(goal.x) === 'E') {
-             roomCenters.push(goal);
-         } else {
-             console.warn("Explore Goal is inside a wall?");
-             // Find nearest walkable tile to goal and add that instead? Or just proceed without explicit goal add.
-         }
-    }
-
-    // Remove duplicate centers (if multiple rooms share a center grid cell)
+    
+    // Filter out duplicates and any center that might be on the goal tile itself.
     let uniqueCenters = [];
-    let seenKeys = new Set();
-    for (let center of roomCenters) {
-        let key = coordKey(center);
+    const seenKeys = new Set();
+    for (const center of roomCenters) {
+        if (center.x === goal.x && center.y === goal.y) {
+            continue; // Don't add the exit to the list of places to explore.
+        }
+        const key = coordKey(center);
         if (!seenKeys.has(key)) {
             uniqueCenters.push(center);
             seenKeys.add(key);
@@ -704,51 +698,46 @@ function explorePath(start, goal, maze, rooms) {
     }
     roomCenters = uniqueCenters;
 
-
     let overallPath = [];
     let currentPos = start;
-    let visitedCenters = new Set(); // Track visited center *cells*
 
+    // Step 2: Loop through all room centers, always pathfinding to the closest one next.
     while (roomCenters.length > 0) {
-        // Find the closest unvisited room center
+        // Find the closest unvisited room center from the current position.
         roomCenters.sort((a, b) => heuristic(currentPos, a) - heuristic(currentPos, b));
-        let targetCenter = roomCenters.shift(); // Get the closest one
+        const targetCenter = roomCenters.shift(); // Get and remove the closest one.
 
-        // Find path segment to this center
-        let segment = bfsPath(currentPos, targetCenter, maze); // Using BFS for shortest paths between centers
+        // Find the path segment to this next center.
+        const segment = bfsPath(currentPos, targetCenter, maze);
 
         if (segment.length > 0) {
-             // Append segment (avoid duplicating the connection point)
-             if (overallPath.length > 0 && segment.length > 1 &&
-                coordKey(overallPath[overallPath.length - 1]) === coordKey(segment[0])) {
+             // Append the new segment, avoiding duplicating the connecting node.
+             if (overallPath.length > 0) {
                  overallPath = overallPath.concat(segment.slice(1));
              } else {
                  overallPath = overallPath.concat(segment);
              }
-             currentPos = targetCenter; // Update current position
+             currentPos = targetCenter; // Update our position for the next iteration.
         } else {
             console.warn("Explore mode: Could not find path segment to center", targetCenter);
-            // Could skip this center or try A* etc. For now, just skip.
         }
     }
 
-     // Finally, ensure path goes to the actual goal cell if it wasn't the last center visited
-     if (coordKey(currentPos) !== coordKey(goal)) {
-        let finalSegment = bfsPath(currentPos, goal, maze);
-        if (finalSegment.length > 0) {
-            if (overallPath.length > 0 && finalSegment.length > 1 &&
-                coordKey(overallPath[overallPath.length - 1]) === coordKey(finalSegment[0])) {
-                overallPath = overallPath.concat(finalSegment.slice(1));
-            } else {
-                 overallPath = overallPath.concat(finalSegment);
-            }
+    // Step 3: After all rooms have been visited, find the final path from our last position to the exit.
+    const finalSegment = bfsPath(currentPos, goal, maze);
+    if (finalSegment.length > 0) {
+        if (overallPath.length > 0) {
+            overallPath = overallPath.concat(finalSegment.slice(1));
         } else {
-             console.warn("Explore mode: Could not find final path segment to goal", goal);
+            overallPath = overallPath.concat(finalSegment);
         }
-     }
+    } else {
+         console.warn("Explore mode: Could not find final path segment to goal", goal);
+    }
 
     return overallPath;
 }
+
 
 // Compute bot path based on current algorithm selection.
 function computeBotPath() {
@@ -1672,7 +1661,7 @@ function render(now) {
   // NEW: Apply view bobbing to the camera's eye position
   if (viewBobbingEnabled) {
     const verticalBob = Math.sin(bobbingTime * bobbingFrequency) * bobbingAmplitude;
-    const horizontalBob = Math.cos(bobbingTime * bobbingFrequency * 0.5) * bobbingAmplitude; // MODIFIED LINE
+    const horizontalBob = Math.cos(bobbingTime * bobbingFrequency) * bobbingAmplitude; // MODIFIED: Same frequency as vertical bob
 
     eye[1] += verticalBob; // Apply vertical bob
 
