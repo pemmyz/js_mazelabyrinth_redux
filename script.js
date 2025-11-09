@@ -549,6 +549,8 @@ let bobbingTime = 0;
 const bobbingFrequency = 10; // How fast the bobbing is
 const bobbingAmplitude = 0.03; // How high/intense the bobbing is
 let bobbingCheckboxRect = { x: 0, y: 0, w: 0, h: 0 }; // For click detection
+let repoLinkRect = { x: 0, y: 0, w: 0, h: 0 }; // NEW: For link click detection
+const repoURL = "https://github.com/pemmyz/js_mazelabyrinth_redux"; // NEW: Repo URL constant
 
 
 // ============================ Pathfinding Helper Functions ============================
@@ -927,21 +929,49 @@ function onMouseDown(e) {
      e.preventDefault(); // Prevent text selection while dragging
   }
 }
+
 function onMouseMove(e) {
-  if (!isDragging || !fullMapVisible || isPaused) return;
-  let dx = e.clientX - dragStartX;
-  let dy = e.clientY - dragStartY;
-  dragOffsetX += dx;
-  dragOffsetY += dy;
-  dragStartX = e.clientX;
-  dragStartY = e.clientY;
+  // --- Part 1: Handle Map Dragging ---
+  if (isDragging && fullMapVisible && !isPaused) {
+    let dx = e.clientX - dragStartX;
+    let dy = e.clientY - dragStartY;
+    dragOffsetX += dx;
+    dragOffsetY += dy;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+  }
+
+  // --- Part 2: Handle Cursor Style on Hover (only when not dragging) ---
+  if (!isDragging && helpVisible && !isPaused) {
+    const rect = e.target.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Check for hover over checkbox
+    const isOverCheckbox = (mouseX >= bobbingCheckboxRect.x && mouseX <= bobbingCheckboxRect.x + bobbingCheckboxRect.w &&
+                            mouseY >= bobbingCheckboxRect.y && mouseY <= bobbingCheckboxRect.y + bobbingCheckboxRect.h);
+
+    // Check for hover over repo link
+    const isOverLink = (mouseX >= repoLinkRect.x && mouseX <= repoLinkRect.x + repoLinkRect.w &&
+                        mouseY >= repoLinkRect.y && mouseY <= repoLinkRect.y + repoLinkRect.h);
+
+    if (isOverCheckbox || isOverLink) {
+      e.target.style.cursor = 'pointer';
+    } else {
+      e.target.style.cursor = 'default';
+    }
+  } else {
+    // Reset cursor if UI is not interactive (e.g., help is hidden, paused, or dragging)
+    e.target.style.cursor = 'default';
+  }
 }
+
 function onMouseUp(e) {
   if (isDragging) {
     isDragging = false;
   }
 }
-// NEW: Handler for clicking UI elements like checkboxes
+
 function onCanvasClick(e) {
     // Only handle clicks if the help menu is visible and game is not paused
     if (!helpVisible || isPaused) return;
@@ -957,10 +987,18 @@ function onCanvasClick(e) {
 
         viewBobbingEnabled = !viewBobbingEnabled;
         console.log("View bobbing " + (viewBobbingEnabled ? "enabled" : "disabled"));
+        updateOverlay(); // Redraw immediately
+        e.preventDefault();
+        return; // Process only one click action
+    }
 
-        // Redraw the overlay to show the change immediately
-        updateOverlay();
-        e.preventDefault(); // Prevent this click from triggering other actions
+    // NEW: Check if the click is within the repository link bounds
+    if (clickX >= repoLinkRect.x && clickX <= repoLinkRect.x + repoLinkRect.w &&
+        clickY >= repoLinkRect.y && clickY <= repoLinkRect.y + repoLinkRect.h) {
+
+        console.log("Repo link clicked. Opening in new tab.");
+        window.open(repoURL, '_blank');
+        e.preventDefault();
     }
 }
 
@@ -1813,7 +1851,7 @@ function updateOverlay() {
 
   ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-  // NEW: If paused, draw the pause screen and nothing else.
+  // If paused, draw the pause screen and nothing else.
   if (isPaused) {
       ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
       ctx.fillRect(0, 0, overlay.width, overlay.height);
@@ -1852,11 +1890,11 @@ function updateOverlay() {
     drawMinimap(ctx, mazeData.maze, discovered, playerCoord, overlay.width, overlay.height);
   }
 
-  // MODIFIED: Draw the help menu
+  // Draw the help menu
   if (helpVisible) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
     const boxWidth = 500;
-    const boxHeight = 470; // Adjusted height for new option
+    const boxHeight = 600; // Increased height to cover all content
     const boxX = 20;
     const boxY = 20;
     ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
@@ -1868,7 +1906,6 @@ function updateOverlay() {
     let textX = boxX + 15;
     let textY = boxY + 35;
     
-    // Capitalize first letter for display
     const moveStyleStr = movementMode.charAt(0).toUpperCase() + movementMode.slice(1);
 
     const instructions = [
@@ -1903,35 +1940,52 @@ function updateOverlay() {
       }
     }
     
-    // NEW: Draw the view bobbing checkbox and label
-    const bobbingLineY = textY + (instructions.length + 1) * lineHeight;
+    // --- Draw interactive UI elements after the main text block ---
+    let currentLine = instructions.length;
+
+    // Draw the view bobbing checkbox
+    let yPos = textY + (currentLine + 1) * lineHeight;
     const bobbingText = "View Bobbing (Click to Toggle)";
     const checkboxSize = 14;
     const checkboxPadding = 10;
-
     ctx.fillStyle = "white";
-    ctx.font = "15px monospace";
-    ctx.fillText(bobbingText, textX, bobbingLineY);
-
-    const textMetrics = ctx.measureText(bobbingText);
-    const checkboxX = textX + textMetrics.width + checkboxPadding;
-    const checkboxY = bobbingLineY - checkboxSize * 0.8; // Align with text baseline
-
-    // Store the checkbox's screen position for click detection
+    ctx.fillText(bobbingText, textX, yPos);
+    const textMetricsBobbing = ctx.measureText(bobbingText);
+    const checkboxX = textX + textMetricsBobbing.width + checkboxPadding;
+    const checkboxY = yPos - checkboxSize * 0.8;
     bobbingCheckboxRect = { x: checkboxX, y: checkboxY, w: checkboxSize, h: checkboxSize };
-
     ctx.strokeStyle = "white";
     ctx.lineWidth = 2;
     ctx.strokeRect(bobbingCheckboxRect.x, bobbingCheckboxRect.y, bobbingCheckboxRect.w, bobbingCheckboxRect.h);
-
     if (viewBobbingEnabled) {
         ctx.fillStyle = "lime";
         ctx.font = `bold ${checkboxSize}px monospace`;
         ctx.textAlign = "center";
-        ctx.fillText("✓", checkboxX + checkboxSize / 2, bobbingLineY + 1);
-        ctx.textAlign = "left"; // Reset for next draw calls
+        ctx.fillText("✓", checkboxX + checkboxSize / 2, yPos + 1);
+        ctx.textAlign = "left";
         ctx.font = "15px monospace";
     }
+
+    // Move down to draw the repo link
+    currentLine += 3; 
+
+    // Draw the repo link label and URL
+    yPos = textY + currentLine * lineHeight;
+    ctx.fillStyle = "white";
+    ctx.fillText("Link to repo:", textX, yPos);
+    
+    yPos += lineHeight; // Move to the next line for the URL
+    ctx.fillStyle = "#66b3ff"; // Use a blue color for the link
+    ctx.fillText(repoURL, textX, yPos);
+    
+    // Calculate and store the clickable area for the URL
+    const textMetricsLink = ctx.measureText(repoURL);
+    repoLinkRect = {
+      x: textX,
+      y: yPos - lineHeight * 0.8, // Align box with the top of the text
+      w: textMetricsLink.width,
+      h: lineHeight
+    };
 
   } else {
      if(!isDragging) {
