@@ -2054,3 +2054,13 @@ window.addEventListener("gamepaddisconnected", e => {
         delete gamepadButtonCooldowns[e.gamepad.index];
     }
 });
+
+// ============================ Mobile/Fullscreen Function ============================
+function goFull() {
+  const el = document.documentElement;
+  if (el.requestFullscreen) {
+    el.requestFullscreen();
+  } else if (el.webkitRequestFullscreen) { // older Android fallback
+    el.webkitRequestFullscreen();
+  }
+}

@@ -1,20 +1,24 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Maze Game WebGL with Bot Mode & Map Overlay & Auto-Start</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Maze Game WebGL with Bot Mode & Map Overlay</title>
   <!-- Link to the external CSS file -->
   <link rel="stylesheet" href="style.css">
-  <!-- Include the gl-matrix library -->
-  <script src="gl-matrix-min.js"></script>
+  
+  <!-- UPDATED: Using gl-matrix 3.x which supports the 'glMatrix.mat4' namespace used in script.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/3.4.2/gl-matrix-min.js"></script>
 </head>
 <body>
-  <!-- Canvas elements remain in the HTML structure -->
+  <!-- Mobile Toggle Button -->
+  <button id="mobileBtn" onclick="goFull()">Switch to mobile</button>
+
+  <!-- Canvas elements -->
   <canvas id="glCanvas"></canvas>
   <canvas id="mazeCanvas"></canvas>
 
-  <!-- Link to the external JavaScript file at the end of the body -->
-  <!-- This ensures HTML elements are loaded before the script tries to access them -->
+  <!-- Link to the external JavaScript file -->
   <script src="script.js"></script>
 </body>
 </html>
